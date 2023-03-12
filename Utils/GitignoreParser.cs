@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace OptoPacker.Utils;
@@ -7,112 +8,12 @@ internal static class GitignoreParser
 {
     static bool IsSystemPath(string path) =>
         path.Count(c => c == '\\') <= 1 && (path.EndsWith("\\$RECYCLE.BIN") || path.EndsWith("\\System Volume Information"));
-
-    static IEnumerable<string> Crawl(string path, Dictionary<string, GitRegex[]> allPatterns, IEnumerable<GitRegex> activePatterns)
+    static StringBuilder AddEscapedRegexCharacter(this StringBuilder sb, char c)
     {
-        if (IsSystemPath(path)) yield break;
-
-        var results = new List<string>();
-        var localActivePatterns = new List<GitRegex>(activePatterns);
-
-        // If we have a pattern for current dir, use it
-        if (allPatterns.TryGetValue(path, out var patterns))
-            localActivePatterns.AddRange(patterns);
-
-        string[] files;
-        try
-        {
-            files = Directory.GetFiles(path, "*", SearchOption.TopDirectoryOnly).Select(f => f.Replace('/', '\\')).ToArray();
-        }
-        catch (Exception)
-        {
-            yield break;
-        }
-
-        foreach (var file in files)
-        {
-            if (localActivePatterns.All(p => p.IsTracked(file, false)))
-                yield return file;
-        }
-        foreach (var dir in Directory.GetDirectories(path, "*", SearchOption.TopDirectoryOnly))
-        {
-            if (dir.EndsWith("\\.git")) continue;
-            if (localActivePatterns.All(p => p.IsTracked(dir, true)))
-            {
-                foreach (var file in Crawl(dir, allPatterns, localActivePatterns)) yield return file;
-            }
-        }
-    }
-    static IEnumerable<string> GetFiles(string path, string pattern, bool topDir = true)
-    {
-        if (IsSystemPath(path)) yield break;
-
-        string[] entries;
-        try
-        {
-            entries = Directory.GetFiles(path, pattern, SearchOption.AllDirectories);
-        }
-        catch (Exception)
-        {
-            if (!topDir) yield break;
-            entries = Array.Empty<string>();
-        }
-
-        if (entries.Length > 0)
-        {
-            foreach (var file in entries)
-            {
-                yield return file;
-            }
-            yield break;
-        }
-
-        try
-        {
-            entries = Directory.GetDirectories(path);
-        }
-        catch (Exception)
-        {
-            entries = Array.Empty<string>();
-        }
-
-        foreach (var subPath in entries)
-        {
-            foreach (var item in GetFiles(subPath, pattern, false))
-            {
-                yield return item;
-            }
-        }
-    }
-    public static IEnumerable<string> GetTrackedFiles(string basePath)
-    {
-        var IgnorePatterns = GetFiles(basePath, "*.gitignore")
-            .ToDictionary(
-                (p) => Path.GetDirectoryName(p)!,
-                (p) => ParseGitignore(p).ToArray()
-            );
-        if (IgnorePatterns == null) return Array.Empty<string>();
-
-        // Get tracked files
-        var patternStack = new List<GitRegex>();
-
-        // Crawl
-        return Crawl(basePath, IgnorePatterns!, new GitRegex[0]);
+        return (c is '.' or '^' or '$' or '*' or '+' or '-' or '?' or '(' or ')' or '[' or ']' or '{' or '}' or '|') ? sb.Append('\\').Append(c) : (c == '\\') ? sb : sb.Append(c);
     }
 
-    static void AddEscapedRegexCharacter(this StringBuilder sb, char c)
-    {
-        if (c is '.' or '^' or '$' or '*' or '+' or '-' or '?' or '(' or ')' or '[' or ']' or '{' or '}' or '\\' or '|')
-        {
-            sb.Append('\\').Append(c);
-        }
-        else
-        {
-            sb.Append(c);
-        }
-    }
-
-    static Regex? ParseGitPattern(ReadOnlySpan<char> str)
+    static string? ParseGitPattern(ReadOnlySpan<char> str)
     {
         var sb = new StringBuilder();
 
@@ -221,13 +122,14 @@ internal static class GitignoreParser
             }
         }
 
-        string built = sb.ToString();
-        if (String.IsNullOrEmpty(built))
+        if (sb.Length <= 0)
             return null;
+
+        sb.Append('$');
 
         try
         {
-            return new Regex(sb.ToString(), RegexOptions.Compiled);
+            return sb.ToString();
         }
         catch (Exception ex)
         {
@@ -236,13 +138,24 @@ internal static class GitignoreParser
         }
     }
 
-    public record struct GitRegex(string BasePath, Regex Regex, bool IsNegated, bool IsDirectory)
+    public record struct GitRegex(string BasePath, Regex Regex, bool IsRootOnly, bool IsDirectory, bool IsNegated)
     {
-        public bool IsTracked(string path, bool isDirectory)
+        public static GitRegex Create(string basePath, [StringSyntax("regex")] string regex, bool rootOnly, bool dirOnly, bool negated)
         {
-            if (IsDirectory != isDirectory) return true;
-            bool matched = Regex.IsMatch(path);
-            return IsNegated != matched;
+            return new GitRegex(basePath, new Regex(regex, RegexOptions.Compiled | RegexOptions.Singleline), rootOnly, dirOnly, negated);
+        }
+
+        private int _depth = -1;
+        public int Depth
+        {
+            get
+            {
+                if (_depth == -1)
+                {
+                    _depth = BasePath.Count(c => c == '/');
+                }
+                return _depth;
+            }
         }
     }
 
@@ -267,12 +180,122 @@ internal static class GitignoreParser
             var regex = ParseGitPattern(str);
             if (regex == null) continue;
 
-            yield return new GitRegex(
+            yield return GitRegex.Create(
                 Path.GetDirectoryName(gitignorePath)!,
                 regex,
-                isNegated,
-                isDirectory
+                str.Contains('/'),
+                isDirectory,
+                isNegated
                 );
         }
+    }
+
+
+    static readonly GitRegex[] UnityProjectIgnorePattern = ParseGitignore("Unity.gitignore").ToArray();
+    public static GitRegex[] GetUnityProjectIgnores(string projectDir)
+    {
+        try
+        {
+            var projectVersionFilePath = Path.Combine(projectDir, "ProjectSettings", "ProjectVersion.txt");
+            if (File.ReadLines(projectVersionFilePath).Any(l => l.StartsWith("m_EditorVersion:")))
+            {
+                return UnityProjectIgnorePattern;
+            }
+        }
+        catch (Exception)
+        {
+        }
+
+        return Array.Empty<GitRegex>();
+    }
+
+    private record struct DirectoryEntry(string Path, bool IsDirectory); 
+    static IEnumerable<string> Crawl(string path, IEnumerable<GitRegex> activePatterns)
+    {
+        if (IsSystemPath(path)) yield break;
+
+        DirectoryEntry[] entries;
+        try
+        {
+            var files = Directory.GetFiles(path, "*", SearchOption.TopDirectoryOnly);
+            var dirs = Directory.GetDirectories(path, "*", SearchOption.TopDirectoryOnly);
+
+            entries = new DirectoryEntry[files.Length + dirs.Length];
+
+            for (int i = 0; i < files.Length; i++)
+            {
+                var file = files[i].Replace('\\', '/');
+
+                if (file.EndsWith("/.gitignore"))
+                {
+                    activePatterns = activePatterns.Concat(ParseGitignore(file));
+                }
+
+                entries[i] = new DirectoryEntry(file, false);
+            }
+
+            int unityDirs = 0;
+            for (int i = 0; i < dirs.Length; i++)
+            {
+                var dir = dirs[i].Replace('\\', '/');
+
+                if (dir.EndsWith("/ProjectSettings") || dir.EndsWith("/Assets"))
+                {
+                    unityDirs++;
+                }
+
+                entries[files.Length + i] = new DirectoryEntry(dir, true);
+            }
+            
+            if (unityDirs >= 2)
+            {
+                activePatterns = activePatterns.Concat(GetUnityProjectIgnores(path));
+            }
+        }
+        catch (Exception)
+        {
+            yield break;
+        }
+
+        GitRegex[] localActivePatterns = activePatterns.ToArray();
+
+        foreach (var entry in entries)
+        {
+            if (entry.IsDirectory && entry.Path.EndsWith("/.git")) continue;
+
+            var matched = false;
+            foreach (var pattern in localActivePatterns)
+            {
+                if ((pattern.IsDirectory && !entry.IsDirectory) || (matched && !pattern.IsNegated)) continue;
+                if (!pattern.Regex.IsMatch(entry.Path)) continue;
+
+                if (pattern.IsDirectory)
+                {
+                    matched = true;
+                    break;
+                }
+
+                matched = !pattern.IsNegated;
+            }
+
+            if (!matched)
+            {
+                if (entry.IsDirectory)
+                {
+                    foreach (var result in Crawl(entry.Path, localActivePatterns.Where(p => !p.IsRootOnly)))
+                    {
+                        yield return result;
+                    }
+                }
+                else
+                {
+                    yield return entry.Path;
+                }
+            }
+        }
+    }
+    public static IEnumerable<string> GetTrackedFiles(string basePath)
+    {
+        return Crawl(basePath, Array.Empty<GitRegex>());
     }
 }

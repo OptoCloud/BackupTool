@@ -9,23 +9,32 @@ internal static class Utilss
     static SHA256? _sha256;
     static SHA256 Sha256 => _sha256 ??= SHA256.Create();
 
-    public static async Task<(byte[] hash, long length)> HashAsync(Stream stream)
+    const int ChunkSize = 4096;
+    public static async Task<(byte[]? hash, long length)> HashAsync(string path)
     {
-        var hash = await Sha256.ComputeHashAsync(stream);
-        return (hash, (int)stream.Length);
-    }
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, true);
 
-    public static async Task<(byte[] hash, long length)> HashAsync(string path)
-    {
-        using var stream = File.OpenRead(path);
-        return await HashAsync(stream);
+        byte[] buffer = new byte[ChunkSize];
+        int nBytesRead;
+        do
+        {
+            nBytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+            if (nBytesRead > 0)
+            {
+                Sha256.TransformBlock(buffer, 0, nBytesRead, buffer, 0);
+            }
+        } while (nBytesRead > 0);
+
+        Sha256.TransformFinalBlock(buffer, 0, 0);
+        
+        return (Sha256.Hash, stream.Length);
     }
 
     public static async IAsyncEnumerable<InputFileInfo> HashAllAsync(string rootPath, IEnumerable<string> files)
     {
         foreach (var file in files)
         {
-            byte[] hash;
+            byte[]? hash;
             long size;
             try
             {
@@ -42,11 +51,11 @@ internal static class Utilss
                 continue;
             }
 
-            yield return new InputFileInfo(rootPath, (ulong)size, 0, hash);
+            yield return new InputFileInfo(file, (ulong)size, 0, hash);
         }
     }
 
-    public static string FormatNumberByteSize(ulong bytes)
+    public static string FormatNumberByteSize(ulong bytes, int padding = -1)
     {
         uint i = 0;
         float f = bytes;
@@ -70,7 +79,8 @@ internal static class Utilss
             _ => "??"
         };
 
-        return $"{f:0.00} {unit}".PadLeft(10);
+        string str = $"{f:0.00} {unit}";
+        return padding > 0 ? str.PadLeft(padding) : str;
     }
 
     public static string GetRelativeName(string rootPath, string subPath, bool isDir)
