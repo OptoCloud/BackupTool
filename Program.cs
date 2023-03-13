@@ -16,22 +16,28 @@ Console.WriteLine($"Found {files.Length} files, queued {fileChunks.Length} jobs"
 
 Console.WriteLine("Hashing files... (This might take a couple minutes)");
 var processedChunksBag = new ConcurrentBag<InputFileInfo[]>();
+
+async Task process(string[] chunk)
+{
+    InputFileInfo[] output = new InputFileInfo[chunk.Length];
+
+    int j = 0;
+    await foreach (var file in Utilss.HashAllAsync(RootPath, chunk))
+    {
+        output[j++] = file;
+    }
+
+    processedChunksBag?.Add(j == chunk.Length ? output : output[..j]);
+}
+
 var jobs = new Task[ParallelTasks];
 for (int i = 0; i < jobs.Length; i++)
 {
     jobs[i] = Task.Run(async () =>
     {
-        while (fileChunksBag.TryTake(out var filesChunk))
+        while (fileChunksBag.TryTake(out var chunk))
         {
-            InputFileInfo[] output = new InputFileInfo[filesChunk.Length];
-
-            int j = 0;
-            await foreach (var file in Utilss.HashAllAsync(RootPath, filesChunk))
-            {
-                output[j++] = file;
-            }
-
-            processedChunksBag.Add(j == filesChunk.Length ? output : output[..j]);
+            await process(chunk);
         }
     });
 }
@@ -73,8 +79,16 @@ var monitor = Task.Run(async () =>
 });
 
 await Task.WhenAll(jobs);
-Console.WriteLine("Jobs done, awaiting monitor...");
 isDone = true;
-await monitor;
+uint nProcessed = await monitor;
 
-Console.WriteLine("Done hashing files! Left: " + fileChunksBag.ToArray().Length);
+var left = fileChunksBag.ToArray();
+if (left.Length > 0)
+{
+    foreach (var chunk in left)
+    {
+        await process(chunk);
+    }
+}
+
+Console.WriteLine("\nDone hashing files!");
