@@ -81,10 +81,19 @@ public static class FileUtils
                     error = "Failed to get stream length";
                 }
             }
-            catch (Exception ex)
+            catch (IOException ex)
             {
-                error = ex.Message;
-                if (error == string.Empty) error = null;
+                error = ex.HResult switch
+                {
+                    -2146233067 => "Operation is not supported. (0x80131515: E_NOTSUPPORTED)",
+                    -2147024784 => "There is not enough space on the disk. (0x80070070: ERROR_DISK_FULL)",
+                    -2147024864 => "The file is being used by another process. (0x80070020: ERROR_SHARING_VIOLATION)",
+                    -2147024882 => "There is not enough memory (RAM). (0x8007000E: E_OUTOFMEMORY)",
+                    -2147024809 => "Invalid arguments provided. (0x80070057: E_INVALIDARG)",
+                    -2147467263 => "Functionality not implemented. (0x80004001: E_NOTIMPL)",
+                    -2147024891 => "Access is denied. (0x80070005: E_ACCESSDENIED)",
+                    _ => ex.Message == string.Empty ? null : ex.Message
+                };
             }
 
             if (fileStream == null)
