@@ -47,6 +47,7 @@ bool isDone = false;
 InputFileInfo[][] processedChunks = new InputFileInfo[fileChunks.Length][];
 var monitor = Task.Run(async () =>
 {
+    int longestMsgLength = 0;
     uint processedFileCount = 0;
     uint processedChunksCount = 0;
     ulong processedBytes = 0;
@@ -72,7 +73,13 @@ var monitor = Task.Run(async () =>
         }
         if (processedFileCount > 0)
         {
-            Console.Write($"\rProcessed: {processedFileCount} / {files.Length} ({duplicates} Duplicates, {Utilss.FormatNumberByteSize(deduplicationsaved)} Saved on dedup, {Utilss.FormatNumberByteSize(processedBytes)} Total, {Utilss.FormatNumberByteSize(processedBytes / processedFileCount)} Average)");
+            string msg = $"\rProcessed: {processedFileCount} / {files.Length} ({duplicates} Duplicates, {Utilss.FormatNumberByteSize(deduplicationsaved)} Saved on dedup, {Utilss.FormatNumberByteSize(processedBytes)} Total, {Utilss.FormatNumberByteSize(processedBytes / processedFileCount)} Average)";
+            if (msg.Length < longestMsgLength)
+            {
+                msg += new string(' ', longestMsgLength - msg.Length);
+            }
+            longestMsgLength = msg.Length;
+            Console.Write(msg);
         }
     }
     return processedChunksCount;
