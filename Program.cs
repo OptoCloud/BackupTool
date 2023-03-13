@@ -98,4 +98,19 @@ if (left.Length > 0)
     }
 }
 
+InputFileInfo[] processedFiles = new InputFileInfo[processedChunks.Sum(c => c.Length)];
+int k = 0;
+foreach (var chunk in processedChunks)
+{
+    Array.Copy(chunk, 0, processedFiles, k, chunk.Length);
+    k += chunk.Length;
+}
+
+Array.Sort(processedFiles, (a, b) => string.Compare(a.Path.Split('.', '/')[^1], b.Path.Split('.', '/')[^1]));
+
+foreach (var item in processedFiles)
+{
+    Console.WriteLine(item.Path);
+}
+
 Console.WriteLine("\nDone hashing files!");
