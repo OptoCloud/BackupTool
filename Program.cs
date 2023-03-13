@@ -1,28 +1,35 @@
 ﻿using OptoPacker.DTOs;
 using OptoPacker.Utils;
 using System.Collections.Concurrent;
+using System.Text;
 
 string RootPath = @"D:\3D Projects\VRChat";
-int ChunkSize = 64;
+int ChunkSize = 128;
 int ParallelTasks = Environment.ProcessorCount;
-int PrintIntervalMs = 250;
+int PrintIntervalMs = 100;
+int hashingBlockSize = 4096;
 
 Console.WriteLine("Gathering files...");
-var files = GitignoreParser.GetTrackedFiles(RootPath).OrderBy(_ => Random.Shared.Next()).ToArray();
-var fileChunks = files.Chunk(ChunkSize).ToArray();
-var fileChunksBag = new ConcurrentBag<string[]>(fileChunks);
-Console.WriteLine($"Found {files.Length} files, queued {fileChunks.Length} jobs");
-
+string[] files = GitignoreParser.GetTrackedFiles(RootPath).OrderBy(_ => Random.Shared.Next()).ToArray();
+string[][] fileChunks = files.Chunk(ChunkSize).ToArray();
+ConcurrentBag<string[]> fileChunksBag = new ConcurrentBag<string[]>(fileChunks);
+Console.WriteLine($"Done, processing statistics:");
+Console.WriteLine($"  Files: {files.Length} ({fileChunks.Length} chunks, each {ChunkSize} files)");
+Console.WriteLine($"  Parallel tasks: {ParallelTasks}");
+Console.WriteLine($"  Print interval: {PrintIntervalMs} ms");
+Console.WriteLine($"  Hashing block size: {hashingBlockSize} bytes");
+Console.WriteLine($"  Total open file handles: {ParallelTasks * ChunkSize}");
+Console.WriteLine();
 
 Console.WriteLine("Hashing files... (This might take a couple minutes)");
-var processedChunksBag = new ConcurrentBag<InputFileInfo[]>();
+ConcurrentBag<InputFileInfo[]> processedChunksBag = new ConcurrentBag<InputFileInfo[]>();
 
-async Task process(string[] chunk)
+async Task process(string[] chunk, FileUtils.MultiFileStatusReportFunc statusReport, CancellationToken cancellationToken)
 {
     InputFileInfo[] output = new InputFileInfo[chunk.Length];
 
     int j = 0;
-    await foreach (var file in Utilss.HashAllAsync(RootPath, chunk))
+    await foreach (InputFileInfo file in FileUtils.HashAllAsync(RootPath, chunk, hashingBlockSize, statusReport, cancellationToken: cancellationToken))
     {
         output[j++] = file;
     }
@@ -30,77 +37,87 @@ async Task process(string[] chunk)
     processedChunksBag?.Add(j == chunk.Length ? output : output[..j]);
 }
 
-var jobs = new Task[ParallelTasks];
+Task[] jobs = new Task[ParallelTasks];
+FileUtils.MultiFileStatusReport[] jobStatuses = new FileUtils.MultiFileStatusReport[ParallelTasks];
 for (int i = 0; i < jobs.Length; i++)
 {
+    int jobIndex = i;
     jobs[i] = Task.Run(async () =>
     {
-        while (fileChunksBag.TryTake(out var chunk))
+        FileUtils.MultiFileStatusReport localReport = new FileUtils.MultiFileStatusReport(0, 0, 0, 0, 0);
+        while (fileChunksBag.TryTake(out string[]? chunk))
         {
-            await process(chunk);
+            FileUtils.MultiFileStatusReport chunkReport = new FileUtils.MultiFileStatusReport((uint)chunk.Length, 0, 0, 0, 0);
+            await process(chunk, sr =>
+            {
+                lock (jobStatuses)
+                {
+                    chunkReport = sr;
+                    jobStatuses[jobIndex] = localReport + sr;
+                }
+            }, CancellationToken.None);
+            localReport += chunkReport;
         }
     });
 }
 
 bool isDone = false;
 
-InputFileInfo[][] processedChunks = new InputFileInfo[fileChunks.Length][];
-var monitor = Task.Run(async () =>
+List<int> prevLines = new List<int>();
+void printStatus(int basePos, string title, params string[] lines)
 {
-    int longestMsgLength = 0;
-    uint processedFileCount = 0;
-    uint processedChunksCount = 0;
-    ulong processedBytes = 0;
-    int duplicates = 0;
-    ulong deduplicationsaved = 0;
-    HashSet<string> hashes = new HashSet<string>();
+    for (int i = prevLines.Count; i < lines.Length + 1; i++) prevLines.Add(0);
+
+    Console.CursorTop = basePos;
+    Console.CursorLeft = 0;
+
+    StringBuilder sb = new StringBuilder();
+
+    if (prevLines[0] > title.Length) title = title.PadRight(prevLines[0]);
+    sb.AppendLine(title);
+    prevLines[0] = title.Length;
+
+    for (int i = 0; i < lines.Length; i++)
+    {
+        string line = lines[i];
+        if (prevLines[i + 1] > line.Length) line = line.PadRight(prevLines[i + 1]);
+        sb.AppendLine(line);
+        prevLines[i + 1] = line.Length;
+    }
+
+    Console.Write(sb.ToString());
+}
+
+Task monitor = Task.Run(async () =>
+{
+    int cursorPos = Console.CursorTop;
     while (!isDone)
     {
         await Task.Delay(PrintIntervalMs);
-        while (processedChunksBag.TryTake(out var chunk))
+        FileUtils.MultiFileStatusReport summary = new FileUtils.MultiFileStatusReport(0, 0, 0, 0, 0);
+        lock (jobStatuses)
         {
-            processedChunks[processedChunksCount++] = chunk;
-            processedFileCount += (uint)chunk.Length;
-            foreach (var f in chunk)
-            {
-                processedBytes += f.Size;
-                if (!hashes.Add(Convert.ToBase64String(f.Hash)))
-                {
-                    duplicates++;
-                    deduplicationsaved += f.Size - (ulong)(32 + 8 + f.Path.Length);
-                }
-            }
+            foreach (FileUtils.MultiFileStatusReport jobStatus in jobStatuses) summary += jobStatus;
         }
-        if (processedFileCount > 0)
-        {
-            string msg = $"\rProcessed: {processedFileCount} / {files.Length} ({duplicates} Duplicates, {Utilss.FormatNumberByteSize(deduplicationsaved)} Saved on dedup, {Utilss.FormatNumberByteSize(processedBytes)} Total, {Utilss.FormatNumberByteSize(processedBytes / processedFileCount)} Average)";
-            if (msg.Length < longestMsgLength)
-            {
-                msg += new string(' ', longestMsgLength - msg.Length);
-            }
-            longestMsgLength = msg.Length;
-            Console.Write(msg);
-        }
+        if (summary.bytesTotal == 0 || summary.filesTotal == 0) continue;
+        printStatus(cursorPos, "Status:",
+            $"   Processed {summary.filesProcessed} / {files.Length} Files",
+            $"   Processed {Utilss.FormatNumberByteSize(summary.bytesProcessed)} / {Utilss.FormatNumberByteSize(summary.bytesTotal)} Bytes",
+            $"   Average files size: {Utilss.FormatNumberByteSize(summary.bytesTotal / summary.filesTotal)}"
+            );
     }
-    return processedChunksCount;
 });
 
 await Task.WhenAll(jobs);
 isDone = true;
-uint nProcessed = await monitor;
+await monitor;
 
-var left = fileChunksBag.ToArray();
-if (left.Length > 0)
-{
-    foreach (var chunk in left)
-    {
-        await process(chunk);
-    }
-}
+if (fileChunksBag.ToArray().Length != 0) throw new Exception("fileChunksBag is not empty");
 
+InputFileInfo[][] processedChunks = processedChunksBag.ToArray();
 InputFileInfo[] processedFiles = new InputFileInfo[processedChunks.Sum(c => c.Length)];
 int k = 0;
-foreach (var chunk in processedChunks)
+foreach (InputFileInfo[] chunk in processedChunks)
 {
     Array.Copy(chunk, 0, processedFiles, k, chunk.Length);
     k += chunk.Length;
@@ -108,9 +125,12 @@ foreach (var chunk in processedChunks)
 
 Array.Sort(processedFiles, (a, b) => string.Compare(a.Path.Split('.', '/')[^1], b.Path.Split('.', '/')[^1]));
 
-foreach (var item in processedFiles)
+foreach (InputFileInfo item in processedFiles)
 {
-    Console.WriteLine(item.Path);
+    if (!String.IsNullOrEmpty(item.Error))
+    {
+        Console.WriteLine($"Error: {item.Path} - {item.Error}");
+    }
 }
 
 Console.WriteLine("\nDone hashing files!");

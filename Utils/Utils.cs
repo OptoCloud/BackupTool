@@ -1,59 +1,7 @@
-﻿using OptoPacker.DTOs;
-using System.Security.Cryptography;
-
-namespace OptoPacker.Utils;
+﻿namespace OptoPacker.Utils;
 
 internal static class Utilss
 {
-    [ThreadStatic]
-    static SHA256? _sha256;
-    static SHA256 Sha256 => _sha256 ??= SHA256.Create();
-
-    const int ChunkSize = 4096;
-    public static async Task<(byte[]? hash, long length)> HashAsync(string path)
-    {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, true);
-
-        byte[] buffer = new byte[ChunkSize];
-        int nBytesRead;
-        do
-        {
-            nBytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-            if (nBytesRead > 0)
-            {
-                Sha256.TransformBlock(buffer, 0, nBytesRead, buffer, 0);
-            }
-        } while (nBytesRead > 0);
-
-        Sha256.TransformFinalBlock(buffer, 0, 0);
-        
-        return (Sha256.Hash, stream.Length);
-    }
-
-    public static async IAsyncEnumerable<InputFileInfo> HashAllAsync(string rootPath, IEnumerable<string> files)
-    {
-        foreach (var file in files)
-        {
-            byte[]? hash;
-            long size;
-            try
-            {
-                (hash, size) = await HashAsync(file);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Skipping {Path.GetFileName(file)}: {ex.Message}");
-                continue;
-            }
-            if (hash == null || size < 0)
-            {
-                Console.WriteLine($"Skipping {Path.GetFileName(file)}: Invalid hash or size");
-                continue;
-            }
-
-            yield return new InputFileInfo(file, (ulong)size, 0, hash);
-        }
-    }
 
     public static string FormatNumberByteSize(ulong bytes, int padding = -1)
     {

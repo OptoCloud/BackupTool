@@ -83,7 +83,7 @@ internal static class GitignoreParser
                             case ']':
                                 if (!allowDashOrClose)
                                 {
-                                    Console.WriteLine("Invalid character class"); // Debug
+                                    Console.WriteLine("Invalid character class"); // Debug ("/build[.-]*")
                                     return null;
                                 }
                                 goto endCharClass;
@@ -209,7 +209,7 @@ internal static class GitignoreParser
         return Array.Empty<GitRegex>();
     }
 
-    private record struct DirectoryEntry(string Path, bool IsDirectory); 
+    private record struct DirectoryEntry(string Path, bool IsDirectory);
     static IEnumerable<string> Crawl(string path, IEnumerable<GitRegex> activePatterns)
     {
         if (IsSystemPath(path)) yield break;
@@ -246,7 +246,7 @@ internal static class GitignoreParser
 
                 entries[files.Length + i] = new DirectoryEntry(dir, true);
             }
-            
+
             if (unityDirs >= 2)
             {
                 activePatterns = activePatterns.Concat(GetUnityProjectIgnores(path));

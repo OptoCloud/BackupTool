@@ -1,3 +1,3 @@
 ﻿namespace OptoPacker.DTOs;
 
-public sealed record InputFileInfo(string Path, UInt64 Size, UInt32 BlobId, byte[] Hash);
+public record struct InputFileInfo(string Path, ulong Size, byte[] Hash, string? Error = null);
