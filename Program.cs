@@ -5,7 +5,7 @@ using System.Collections.Concurrent;
 string RootPath = @"D:\3D Projects\VRChat";
 int ChunkSize = 64;
 int ParallelTasks = Environment.ProcessorCount;
-int PrintIntervalMs = 100;
+int PrintIntervalMs = 250;
 
 Console.WriteLine("Gathering files...");
 var files = GitignoreParser.GetTrackedFiles(RootPath).OrderBy(_ => Random.Shared.Next()).ToArray();
@@ -44,6 +44,9 @@ var monitor = Task.Run(async () =>
     uint processedFileCount = 0;
     uint processedChunksCount = 0;
     ulong processedBytes = 0;
+    int duplicates = 0;
+    ulong deduplicationsaved = 0;
+    HashSet<string> hashes = new HashSet<string>();
     while (!isDone)
     {
         await Task.Delay(PrintIntervalMs);
@@ -51,11 +54,19 @@ var monitor = Task.Run(async () =>
         {
             processedChunks[processedChunksCount++] = chunk;
             processedFileCount += (uint)chunk.Length;
-            foreach (var f in chunk) processedBytes += f.Size;
+            foreach (var f in chunk)
+            {
+                processedBytes += f.Size;
+                if (!hashes.Add(Convert.ToBase64String(f.Hash)))
+                {
+                    duplicates++;
+                    deduplicationsaved += f.Size - (ulong)(32 + 8 + f.Path.Length);
+                }
+            }
         }
         if (processedFileCount > 0)
         {
-            Console.Write($"\rProcessed: {processedFileCount} / {files.Length} ({Utilss.FormatNumberByteSize(processedBytes)} Total, averaging {Utilss.FormatNumberByteSize(processedBytes / processedFileCount)})");
+            Console.Write($"\rProcessed: {processedFileCount} / {files.Length} ({duplicates} Duplicates, {Utilss.FormatNumberByteSize(deduplicationsaved)} Saved on dedup, {Utilss.FormatNumberByteSize(processedBytes)} Total, {Utilss.FormatNumberByteSize(processedBytes / processedFileCount)} Average)");
         }
     }
     return processedChunksCount;
