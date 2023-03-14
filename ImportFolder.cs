@@ -11,8 +11,8 @@ public sealed class ImportFolder : IImportable
 
     public string Path { get; }
 
-    public IEnumerable<string> GetFiles()
+    public IEnumerable<string> GetFiles(CancellationToken cancellationToken)
     {
-        return GitignoreParser.GetTrackedFiles(Path);
+        return GitignoreParser.GetTrackedFiles(Path, cancellationToken);
     }
 }

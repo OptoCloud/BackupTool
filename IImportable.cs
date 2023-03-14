@@ -2,5 +2,5 @@
 
 internal interface IImportable
 {
-    IEnumerable<string> GetFiles();
+    IEnumerable<string> GetFiles(CancellationToken cancellationToken = default);
 }

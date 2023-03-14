@@ -210,8 +210,10 @@ internal static class GitignoreParser
     }
 
     private record struct DirectoryEntry(string Path, bool IsDirectory);
-    static IEnumerable<string> Crawl(string path, IEnumerable<GitRegex> activePatterns)
+    static IEnumerable<string> Crawl(string path, IEnumerable<GitRegex> activePatterns, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (IsSystemPath(path)) yield break;
 
         DirectoryEntry[] entries;
@@ -224,6 +226,7 @@ internal static class GitignoreParser
 
             for (int i = 0; i < files.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var file = files[i].Replace('\\', '/');
 
                 if (file.EndsWith("/.gitignore"))
@@ -237,6 +240,7 @@ internal static class GitignoreParser
             int unityDirs = 0;
             for (int i = 0; i < dirs.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var dir = dirs[i].Replace('\\', '/');
 
                 if (dir.EndsWith("/ProjectSettings") || dir.EndsWith("/Assets"))
@@ -261,6 +265,7 @@ internal static class GitignoreParser
 
         foreach (var entry in entries)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (entry.IsDirectory && entry.Path.EndsWith("/.git")) continue;
 
             var matched = false;
@@ -282,7 +287,7 @@ internal static class GitignoreParser
             {
                 if (entry.IsDirectory)
                 {
-                    foreach (var result in Crawl(entry.Path, localActivePatterns.Where(p => !p.IsRootOnly)))
+                    foreach (var result in Crawl(entry.Path, localActivePatterns.Where(p => !p.IsRootOnly), cancellationToken))
                     {
                         yield return result;
                     }
@@ -294,8 +299,8 @@ internal static class GitignoreParser
             }
         }
     }
-    public static IEnumerable<string> GetTrackedFiles(string basePath)
+    public static IEnumerable<string> GetTrackedFiles(string basePath, CancellationToken cancellationToken)
     {
-        return Crawl(basePath, Array.Empty<GitRegex>());
+        return Crawl(basePath, Array.Empty<GitRegex>(), cancellationToken);
     }
 }

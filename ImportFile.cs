@@ -9,7 +9,7 @@ public sealed class ImportFile : IImportable
 
     public string Path { get; }
 
-    public IEnumerable<string> GetFiles()
+    public IEnumerable<string> GetFiles(CancellationToken cancellationToken)
     {
         yield return Path;
     }
