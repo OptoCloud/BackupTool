@@ -1,4 +1,5 @@
-﻿using OptoPacker.DTOs;
+﻿using OptoPacker.Delegates;
+using OptoPacker.DTOs;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 
@@ -8,12 +9,11 @@ public static class FileUtils
 {
     const int ReportBytesInterval = 1024 * 1024 * 10; // 10 MB
 
-    private delegate void SingleFileStatusReport(ulong bytesRead);
-    private static async Task<byte[]?> HashAsync(FileStream fileStream, int chunkSize = 4096, SingleFileStatusReport? statusReport = null, CancellationToken cancellationToken = default)
+    private static async Task<byte[]?> HashAsync(FileStream fileStream, SingleFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, CancellationToken cancellationToken = default)
     {
         if (!fileStream.CanRead) return null;
 
-        byte[] buffer = new byte[chunkSize];
+        byte[] buffer = new byte[hashingBlockSize];
         using SHA256 sha256 = SHA256.Create();
 
         int bytesReadChunk;
@@ -29,7 +29,7 @@ public static class FileUtils
                 bytesReadTotal += (ulong)bytesReadChunk;
                 if (bytesReadTotal - lastReportBytesRead >= ReportBytesInterval)
                 {
-                    statusReport?.Invoke(bytesReadTotal);
+                    statusReportFunc.Invoke(bytesReadTotal);
                     lastReportBytesRead = bytesReadTotal;
                 }
             }
@@ -39,33 +39,26 @@ public static class FileUtils
 
         return sha256.Hash;
     }
-    public static async Task<(byte[]? hash, long length)> HashAsync(string path, int chunkSize = 4096, CancellationToken cancellationToken = default)
+    public static async Task<(byte[]? hash, long length)> HashAsync(string path, SingleFileStatusReportFunc statusReportFunc, int chunkSize = 4096, CancellationToken cancellationToken = default)
     {
         using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, chunkSize, true);
 
-        byte[]? hash = await HashAsync(stream, chunkSize, null, cancellationToken);
+        byte[]? hash = await HashAsync(stream, statusReportFunc, chunkSize, cancellationToken);
 
         return (hash, stream.Length);
     }
     private static InputFileInfo EmptyInputFileInfo(string path) => new InputFileInfo(path, 0, Array.Empty<byte>());
     private static InputFileInfo ErrorInputFileInfo(string path, ulong size, string error) => new InputFileInfo(path, size, Array.Empty<byte>(), error);
-    public record struct MultiFileStatusReport(uint filesTotal, uint filesProcessed, uint filesFailed, ulong bytesTotal, ulong bytesProcessed)
-    {
-        public static MultiFileStatusReport operator +(MultiFileStatusReport a, MultiFileStatusReport b)
-        {
-            return new MultiFileStatusReport(
-                a.filesTotal + b.filesTotal,
-                a.filesProcessed + b.filesProcessed,
-                a.filesFailed + b.filesFailed,
-                a.bytesTotal + b.bytesTotal,
-                a.bytesProcessed + b.bytesProcessed
-                );
-        }
-    }
-    public delegate void MultiFileStatusReportFunc(MultiFileStatusReport statusReport);
-    public static async IAsyncEnumerable<InputFileInfo> HashAllAsync(string rootPath, string[] filePaths, int chunkSize = 4096, MultiFileStatusReportFunc? statusReportFunc = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public static async IAsyncEnumerable<InputFileInfo> HashAllAsync(string[] filePaths, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         MultiFileStatusReport statusReport = new MultiFileStatusReport((uint)filePaths.Length, 0, 0, 0, 0);
+        void subStatusReportFunc(ulong bytesRead)
+        {
+            statusReportFunc.Invoke(statusReport with
+            {
+                bytesProcessed = statusReport.bytesProcessed + bytesRead
+            });
+        }
 
         List<(string path, FileStream fileStream)> files = new List<(string path, FileStream fileStream)>();
         foreach (string path in filePaths)
@@ -74,7 +67,7 @@ public static class FileUtils
             FileStream? fileStream = null;
             try
             {
-                fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, chunkSize, true);
+                fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, hashingBlockSize, true);
                 if (fileStream.Length < 0)
                 {
                     fileStream?.Dispose();
@@ -125,7 +118,7 @@ public static class FileUtils
             string? error = null;
             try
             {
-                hash = await HashAsync(fileStream, chunkSize, (nRead) => statusReportFunc?.Invoke(statusReport with { bytesProcessed = statusReport.bytesProcessed + nRead }), cancellationToken);
+                hash = await HashAsync(fileStream, subStatusReportFunc, hashingBlockSize, cancellationToken);
                 statusReport.bytesProcessed += fileSize;
             }
             catch (Exception ex)
