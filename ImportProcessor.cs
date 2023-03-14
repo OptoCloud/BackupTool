@@ -11,14 +11,21 @@ internal static class ImportProcessor
     private static async Task FileProcessorJob(int hashingBlockSize, MultiFileStatusReportFunc statusReportFunc, ConcurrentBag<string[]> inputBag, ConcurrentBag<InputFileInfo[]> outputBag, CancellationToken cancellationToken)
     {
         MultiFileStatusReport localReport = new MultiFileStatusReport(0, 0, 0, 0, 0);
+
+
         while (inputBag.TryTake(out string[]? chunk))
         {
             MultiFileStatusReport chunkReport = new MultiFileStatusReport((uint)chunk.Length, 0, 0, 0, 0);
 
             InputFileInfo[] output = new InputFileInfo[chunk.Length];
 
+            void subStatusReportFunc(MultiFileStatusReport report)
+            {
+                chunkReport = report;
+                statusReportFunc.Invoke(localReport + report);
+            }
             int j = 0;
-            await foreach (InputFileInfo file in FileUtils.HashAllAsync(chunk, statusReportFunc, hashingBlockSize, cancellationToken))
+            await foreach (InputFileInfo file in FileUtils.HashAllAsync(chunk, subStatusReportFunc, hashingBlockSize, cancellationToken))
             {
                 output[j++] = file;
             }
