@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using OptoPacker;
 using OptoPacker.Database;
 using OptoPacker.Database.Models;
@@ -8,13 +9,12 @@ using System.Text;
 
 int ChunkSize = 128;
 int ParallelTasks = Environment.ProcessorCount;
-int PrintIntervalMs = 100;
 int hashingBlockSize = 4096;
 
 List<IImportable> imports = new List<IImportable>()
 {
     //new ImportFolder( @"H:\"),
-    new ImportFolder( @"H:\ReverseEngineering\VRChat\UserData"),
+    new ImportFolder( @"D:\User\Downloads"),
 };
 
 // Get path to temp folder, and create sqlite database
@@ -29,67 +29,101 @@ if (File.Exists(dbPath))
 var options = new DbContextOptionsBuilder<OptoPackerContext>()
     .UseSqlite($"Data Source={dbPath}")
     .Options;
-using var context = new OptoPackerContext(options);
-context.Database.EnsureCreated();
-
-Console.WriteLine("Gathering files...");
-var importFiles = imports.Select(x => new PathTree(x.BasePath).AddMany(x.GetFiles())).ToArray();
-
-Console.WriteLine("Creating directory database entries...");
-List<FlattenedPathTreeLevel> levels = new List<FlattenedPathTreeLevel>();
-foreach (var importFile in importFiles)
-{
-    await importFile.DbCreateDirectoriesAsync(context);
-}
 
 int i = 0;
-Console.WriteLine("Hashing files... (This might take a couple minutes)");
-int cursorPos = Console.CursorTop;
+int cursorPos;
+Dictionary<string, PathTreeFile> files;
 List<int> prevLines = new List<int>();
-var files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
-Dictionary<string, BlobEntity> dbBlobs = new Dictionary<string, BlobEntity>();
-List<(PathTreeFile file, BlobEntity blob)> fileBlobPairs = new List<(PathTreeFile file, BlobEntity blob)>();
-await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync(files.Keys.ToArray(), printStatusReport, hashingBlockSize, ChunkSize, ParallelTasks))
+List<(string path, string hash)> FilesToAdd = new List<(string path, string hash)>();
+using (var context = new OptoPackerContext(options))
 {
-    string hash = Utilss.BytesToHex(file.Hash);
+    context.Database.EnsureCreated();
 
-    // Get or queue blob
-    if (!dbBlobs.TryGetValue(hash, out BlobEntity? blob))
+    Console.WriteLine("Gathering files...");
+    var importFiles = imports.Select(x => new PathTree(x.BasePath).AddMany(x.GetFiles())).ToArray();
+
+    Console.WriteLine("Creating directory database entries...");
+    List<FlattenedPathTreeLevel> levels = new List<FlattenedPathTreeLevel>();
+    foreach (var importFile in importFiles)
     {
-        blob = new BlobEntity()
-        {
-            Hash = file.Hash,
-            Size = file.Size,
-        };
-        dbBlobs.Add(hash, blob);
+        await importFile.DbCreateDirectoriesAsync(context);
     }
-    fileBlobPairs.Add((files[file.Path], blob));
-    i++;
-}
 
-Console.WriteLine("Writing blobs to database...");
-await context.Blobs.AddRangeAsync(dbBlobs.Values.ToArray());
-await context.SaveChangesAsync();
 
-Console.WriteLine("Assigning file blobIds...");
-List<FileEntity> dbFiles = new List<FileEntity>();
-foreach (var (file, blob) in fileBlobPairs)
-{
-    string name = file.Name;
-    int extPos = name.LastIndexOf('.');
-
-    dbFiles.Add(new FileEntity
+    Console.WriteLine("Hashing files... (This might take a couple minutes)");
+    cursorPos = Console.CursorTop;
+    files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
+    Dictionary<string, BlobEntity> dbBlobs = new Dictionary<string, BlobEntity>();
+    List<(PathTreeFile file, BlobEntity blob)> fileBlobPairs = new List<(PathTreeFile file, BlobEntity blob)>();
+    await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync(files.Keys.ToArray(), printStatusReport, hashingBlockSize, ChunkSize, ParallelTasks))
     {
-        BlobId = blob.Id,
-        DirectoryId = file.DirectoryId!.Value,
-        Name = extPos > 0 ? name[..extPos] : name,
-        Extension = extPos > 0 ? name[(extPos + 1)..] : string.Empty
-    });
+        string hash = Utilss.BytesToHex(file.Hash);
+
+        // Get or queue blob
+        if (!dbBlobs.TryGetValue(hash, out BlobEntity? blob))
+        {
+            blob = new BlobEntity()
+            {
+                Hash = file.Hash,
+                Size = file.Size,
+            };
+            dbBlobs.Add(hash, blob);
+        }
+        fileBlobPairs.Add((files[file.Path], blob));
+        FilesToAdd.Add((file.Path, hash));
+        i++;
+    }
+
+    Console.WriteLine("Writing blobs to database...");
+    await context.Blobs.AddRangeAsync(dbBlobs.Values.ToArray());
+    await context.SaveChangesAsync();
+
+    Console.WriteLine("Assigning file blobIds...");
+    List<FileEntity> dbFiles = new List<FileEntity>();
+    foreach (var (file, blob) in fileBlobPairs)
+    {
+        string name = file.Name;
+        int extPos = name.LastIndexOf('.');
+
+        dbFiles.Add(new FileEntity
+        {
+            BlobId = blob.Id,
+            DirectoryId = file.DirectoryId!.Value,
+            Name = extPos > 0 ? name[..extPos] : name,
+            Extension = extPos > 0 ? name[(extPos + 1)..] : string.Empty
+        });
+    }
+
+    Console.WriteLine("Writing files to database...");
+    await context.Files.AddRangeAsync(dbFiles);
+    await context.SaveChangesAsync();
+    await context.Database.CloseConnectionAsync();
+}
+// Stupid fix
+SqliteConnection.ClearAllPools();
+GC.Collect();
+GC.WaitForPendingFinalizers();
+
+string archivePath = "D:\\archive.7z";
+if (File.Exists(archivePath))
+{
+    File.Delete(archivePath);
 }
 
-Console.WriteLine("Writing files to database...");
-await context.Files.AddRangeAsync(dbFiles);
-await context.SaveChangesAsync();
+using FileStream sevenZipFile = File.Open(archivePath, FileMode.CreateNew);
+
+/*
+// Add database
+archive.CreateEntry("index.sqlite", dbPath);
+
+// Add all other files
+foreach (var (path, hash) in FilesToAdd)
+{
+    archive.CreateEntry(hash[..2] + '/' + hash, path);
+}
+
+archive.Save(sevenZipFile);
+*/
 
 void printStatusReport(MultiFileStatusReport summary)
 {
