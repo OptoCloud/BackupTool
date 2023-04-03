@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -6,8 +7,26 @@ namespace OptoPacker.Utils;
 
 internal static class GitignoreParser
 {
-    static bool IsSystemPath(string path) =>
-        path.Count(c => c == '\\') <= 1 && (path.EndsWith("\\$RECYCLE.BIN") || path.EndsWith("\\System Volume Information"));
+    static bool IsSystemPath(string path)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var directory = new DirectoryInfo(path);
+            if (directory.Parent == null) return false;
+
+            while (directory.Parent?.Parent != null)
+            {
+                directory = directory.Parent;
+            }
+
+            var dirName = directory.Name;
+
+            return dirName == "System Volume Information" || dirName == "$RECYCLE.BIN";
+
+        }
+
+        return false;
+    }
     static StringBuilder AddEscapedRegexCharacter(this StringBuilder sb, char c)
     {
         return (c is '.' or '^' or '$' or '*' or '+' or '-' or '?' or '(' or ')' or '[' or ']' or '{' or '}' or '|') ? sb.Append('\\').Append(c) : (c == '\\') ? sb : sb.Append(c);
