@@ -6,13 +6,18 @@ public sealed class ImportFolder : IImportable
 {
     public ImportFolder(string path)
     {
-        Path = path;
+        if (!Directory.Exists(path))
+        {
+            throw new DirectoryNotFoundException("Directory not found");
+        }
+
+        BasePath = path;
     }
 
-    public string Path { get; }
+    public string BasePath { get; }
 
     public IEnumerable<string> GetFiles(CancellationToken cancellationToken)
     {
-        return GitignoreParser.GetTrackedFiles(Path, cancellationToken);
+        return GitignoreParser.GetTrackedFiles(BasePath, cancellationToken);
     }
 }

@@ -8,7 +8,7 @@ namespace OptoPacker;
 
 internal static class ImportProcessor
 {
-    private static async Task FileProcessorJob(int hashingBlockSize, MultiFileStatusReportFunc statusReportFunc, ConcurrentBag<string[]> inputBag, ConcurrentBag<InputFileInfo[]> outputBag, CancellationToken cancellationToken)
+    private static async Task FileProcessorJob(int hashingBlockSize, MultiFileStatusReportFunc statusReportFunc, ConcurrentBag<string[]> inputBag, ConcurrentBag<ProcessedFileInfo[]> outputBag, CancellationToken cancellationToken)
     {
         MultiFileStatusReport localReport = new MultiFileStatusReport(0, 0, 0, 0, 0);
 
@@ -17,7 +17,7 @@ internal static class ImportProcessor
         {
             MultiFileStatusReport chunkReport = new MultiFileStatusReport((uint)chunk.Length, 0, 0, 0, 0);
 
-            InputFileInfo[] output = new InputFileInfo[chunk.Length];
+            ProcessedFileInfo[] output = new ProcessedFileInfo[chunk.Length];
 
             void subStatusReportFunc(MultiFileStatusReport report)
             {
@@ -25,7 +25,7 @@ internal static class ImportProcessor
                 statusReportFunc.Invoke(localReport + report);
             }
             int j = 0;
-            await foreach (InputFileInfo file in FileUtils.HashAllAsync(chunk, subStatusReportFunc, hashingBlockSize, cancellationToken))
+            await foreach (ProcessedFileInfo file in FileUtils.HashAllAsync(chunk, subStatusReportFunc, hashingBlockSize, cancellationToken))
             {
                 output[j++] = file;
             }
@@ -35,14 +35,14 @@ internal static class ImportProcessor
         }
     }
 
-    public static async IAsyncEnumerable<InputFileInfo> ProcessFiles(string[] files, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, int chunkingSize = 128, int parallelism = -1, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public static async IAsyncEnumerable<ProcessedFileInfo> ProcessFiles(string[] files, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, int chunkingSize = 128, int parallelism = -1, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Default to number of logical cores
         parallelism = parallelism == -1 ? Environment.ProcessorCount : parallelism;
 
         Task[] jobs = new Task[parallelism];
         ConcurrentBag<string[]> inputChunksBag = new ConcurrentBag<string[]>(files.Chunk(chunkingSize));
-        ConcurrentBag<InputFileInfo[]> outputChunksBag = new ConcurrentBag<InputFileInfo[]>();
+        ConcurrentBag<ProcessedFileInfo[]> outputChunksBag = new ConcurrentBag<ProcessedFileInfo[]>();
         MultiFileStatusReport[] jobStatuses = new MultiFileStatusReport[parallelism];
 
         for (int i = 0; i < jobs.Length; i++)
@@ -65,9 +65,9 @@ internal static class ImportProcessor
         while (!allTasks.IsCompleted)
         {
             await Task.Delay(100, cancellationToken);
-            if (outputChunksBag.TryTake(out InputFileInfo[]? chunk))
+            if (outputChunksBag.TryTake(out ProcessedFileInfo[]? chunk))
             {
-                foreach (InputFileInfo file in chunk)
+                foreach (ProcessedFileInfo file in chunk)
                 {
                     yield return file;
                 }
@@ -86,16 +86,16 @@ internal static class ImportProcessor
             {
                 statusReportFunc((aggregatedStatus + report) with { filesTotal = (uint)files.Length });
             }
-            await foreach (InputFileInfo file in FileUtils.HashAllAsync(chunk, subStatusReportFunc, hashingBlockSize, cancellationToken))
+            await foreach (ProcessedFileInfo file in FileUtils.HashAllAsync(chunk, subStatusReportFunc, hashingBlockSize, cancellationToken))
             {
                 yield return file;
             }
         }
 
         // Ensure all output chunks are exported
-        while (outputChunksBag.TryTake(out InputFileInfo[]? chunk))
+        while (outputChunksBag.TryTake(out ProcessedFileInfo[]? chunk))
         {
-            foreach (InputFileInfo file in chunk)
+            foreach (ProcessedFileInfo file in chunk)
             {
                 yield return file;
             }

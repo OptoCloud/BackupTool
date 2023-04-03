@@ -4,13 +4,20 @@ public sealed class ImportFile : IImportable
 {
     public ImportFile(string path)
     {
-        Path = path;
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException("File not found", path);
+        }
+
+        FileName = Path.GetFileName(path);
+        BasePath = Path.GetDirectoryName(path)!;
     }
 
-    public string Path { get; }
+    public string FileName { get; }
+    public string BasePath { get; }
 
     public IEnumerable<string> GetFiles(CancellationToken cancellationToken)
     {
-        yield return Path;
+        yield return FileName;
     }
 }

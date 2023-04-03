@@ -47,9 +47,9 @@ public static class FileUtils
 
         return (hash, stream.Length);
     }
-    private static InputFileInfo EmptyInputFileInfo(string path) => new InputFileInfo(path, 0, Array.Empty<byte>());
-    private static InputFileInfo ErrorInputFileInfo(string path, ulong size, string error) => new InputFileInfo(path, size, Array.Empty<byte>(), error);
-    public static async IAsyncEnumerable<InputFileInfo> HashAllAsync(string[] filePaths, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    private static ProcessedFileInfo EmptyInputFileInfo(string path) => new ProcessedFileInfo(path, 0, Array.Empty<byte>());
+    private static ProcessedFileInfo ErrorInputFileInfo(string path, ulong size, string error) => new ProcessedFileInfo(path, size, Array.Empty<byte>(), error);
+    public static async IAsyncEnumerable<ProcessedFileInfo> HashAllAsync(string[] filePaths, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         MultiFileStatusReport statusReport = new MultiFileStatusReport((uint)filePaths.Length, 0, 0, 0, 0);
         void subStatusReportFunc(ulong bytesRead)
@@ -141,7 +141,7 @@ public static class FileUtils
                 continue;
             }
 
-            yield return new InputFileInfo(path, fileSize, hash);
+            yield return new ProcessedFileInfo(path, fileSize, hash);
             statusReport.filesProcessed++;
         }
 
