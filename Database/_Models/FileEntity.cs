@@ -9,7 +9,7 @@ public sealed class FileEntity
 
     public ulong Id { get; set; }
     public ulong BlobId { get; set; }
-    public ulong FolderId { get; set; }
+    public ulong DirectoryId { get; set; }
     public string Name { get; set; }
     public string Extension { get; set; }
 
@@ -32,8 +32,8 @@ public sealed class FileEntityConfiguration : IEntityTypeConfiguration<FileEntit
             .HasColumnName("blob_id")
             .IsRequired();
 
-        builder.Property(x => x.FolderId)
-            .HasColumnName("folder_id")
+        builder.Property(x => x.DirectoryId)
+            .HasColumnName("directory_id")
             .IsRequired();
 
         builder.Property(x => x.Name)
@@ -51,10 +51,10 @@ public sealed class FileEntityConfiguration : IEntityTypeConfiguration<FileEntit
 
         builder.HasOne(x => x.Folder)
             .WithMany(x => x.Files)
-            .HasForeignKey(x => x.FolderId)
+            .HasForeignKey(x => x.DirectoryId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasIndex(x => new { x.FolderId, x.Name, x.Extension })
+        builder.HasIndex(x => new { x.DirectoryId, x.Name, x.Extension })
             .IsUnique();
     }
 }

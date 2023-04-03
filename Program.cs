@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using OptoPacker;
 using OptoPacker.Database;
+using OptoPacker.Database.Models;
 using OptoPacker.DTOs;
 using OptoPacker.Utils;
 using System.Text;
@@ -12,8 +13,8 @@ int hashingBlockSize = 4096;
 
 List<IImportable> imports = new List<IImportable>()
 {
-    new ImportFolder( @"H:\"),
-    new ImportFile( @"D:\Piracy\finished torrents\Операция «Мертвый снег» 2 (2014) BDRip 745.avi"),
+    //new ImportFolder( @"H:\"),
+    new ImportFolder( @"H:\ReverseEngineering\VRChat\UserData"),
 };
 
 // Get path to temp folder, and create sqlite database
@@ -38,7 +39,7 @@ Console.WriteLine("Creating directory database entries...");
 List<FlattenedPathTreeLevel> levels = new List<FlattenedPathTreeLevel>();
 foreach (var importFile in importFiles)
 {
-    importFile.DbCreateDirectories(context);
+    await importFile.DbCreateDirectoriesAsync(context);
 }
 
 int i = 0;
@@ -46,12 +47,49 @@ Console.WriteLine("Hashing files... (This might take a couple minutes)");
 int cursorPos = Console.CursorTop;
 List<int> prevLines = new List<int>();
 var files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
-await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFiles(files.Keys.ToArray(), printStatusReport, hashingBlockSize, ChunkSize, ParallelTasks))
+Dictionary<string, BlobEntity> dbBlobs = new Dictionary<string, BlobEntity>();
+List<(PathTreeFile file, BlobEntity blob)> fileBlobPairs = new List<(PathTreeFile file, BlobEntity blob)>();
+await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync(files.Keys.ToArray(), printStatusReport, hashingBlockSize, ChunkSize, ParallelTasks))
 {
-    files[file.Path].Size = file.Size;
-    files[file.Path].Hash = file.Hash;
+    string hash = Utilss.BytesToHex(file.Hash);
+
+    // Get or queue blob
+    if (!dbBlobs.TryGetValue(hash, out BlobEntity? blob))
+    {
+        blob = new BlobEntity()
+        {
+            Hash = file.Hash,
+            Size = file.Size,
+        };
+        dbBlobs.Add(hash, blob);
+    }
+    fileBlobPairs.Add((files[file.Path], blob));
     i++;
 }
+
+Console.WriteLine("Writing blobs to database...");
+await context.Blobs.AddRangeAsync(dbBlobs.Values.ToArray());
+await context.SaveChangesAsync();
+
+Console.WriteLine("Assigning file blobIds...");
+List<FileEntity> dbFiles = new List<FileEntity>();
+foreach (var (file, blob) in fileBlobPairs)
+{
+    string name = file.Name;
+    int extPos = name.LastIndexOf('.');
+
+    dbFiles.Add(new FileEntity
+    {
+        BlobId = blob.Id,
+        DirectoryId = file.DirectoryId!.Value,
+        Name = extPos > 0 ? name[..extPos] : name,
+        Extension = extPos > 0 ? name[(extPos + 1)..] : string.Empty
+    });
+}
+
+Console.WriteLine("Writing files to database...");
+await context.Files.AddRangeAsync(dbFiles);
+await context.SaveChangesAsync();
 
 void printStatusReport(MultiFileStatusReport summary)
 {

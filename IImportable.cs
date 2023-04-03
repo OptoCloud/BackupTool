@@ -1,7 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
-using OptoPacker.Database;
-
-namespace OptoPacker;
+﻿namespace OptoPacker;
 
 internal interface IImportable
 {

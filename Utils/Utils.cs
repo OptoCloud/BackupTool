@@ -2,6 +2,10 @@
 
 internal static class Utilss
 {
+    public static string BytesToHex(byte[] bytes)
+    {
+        return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
+    }
 
     public static string FormatNumberByteSize(ulong bytes, int padding = -1)
     {

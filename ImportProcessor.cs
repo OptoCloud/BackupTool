@@ -35,7 +35,7 @@ internal static class ImportProcessor
         }
     }
 
-    public static async IAsyncEnumerable<ProcessedFileInfo> ProcessFiles(string[] files, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, int chunkingSize = 128, int parallelism = -1, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public static async IAsyncEnumerable<ProcessedFileInfo> ProcessFilesAsync(string[] files, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, int chunkingSize = 128, int parallelism = -1, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Default to number of logical cores
         parallelism = parallelism == -1 ? Environment.ProcessorCount : parallelism;

@@ -50,11 +50,11 @@ public sealed class PathTree
         return this;
     }
 
-    public void DbCreateDirectories(OptoPackerContext dbCtx)
+    public Task DbCreateDirectoriesAsync(OptoPackerContext dbCtx, CancellationToken cancellationToken = default)
     {
-        DbCreateDirectories(dbCtx, new PathTreeDirectory[] { Root }, 0);
+        return DbCreateDirectoriesAsync(dbCtx, new PathTreeDirectory[] { Root }, 0, cancellationToken);
     }
-    private static void DbCreateDirectories(OptoPackerContext dbCtx, PathTreeDirectory[] nodes, int depth)
+    private static async Task DbCreateDirectoriesAsync(OptoPackerContext dbCtx, PathTreeDirectory[] nodes, int depth, CancellationToken cancellationToken)
     {
         List<PathTreeDirectory> nextNodes = new List<PathTreeDirectory>();
         
@@ -62,10 +62,10 @@ public sealed class PathTree
         foreach (var node in nodes)
         {
             nextNodes.AddRange(node.Children);
-            dbCtx.Directories.Add(new DirectoryEntity { Name = node.Name, ParentId = node.ParentId });
+            await dbCtx.Directories.AddAsync(new DirectoryEntity { Name = node.Name, ParentId = node.ParentId }, cancellationToken);
         }
 
-        dbCtx.SaveChanges();
+        await dbCtx.SaveChangesAsync(cancellationToken);
 
         // Now that we have the IDs, we can update the parent IDs
         foreach (var node in nodes)
@@ -77,7 +77,7 @@ public sealed class PathTree
         // Recurse
         if (nextNodes.Count > 0)
         {
-            DbCreateDirectories(dbCtx, nextNodes.ToArray(), depth + 1);
+            await DbCreateDirectoriesAsync(dbCtx, nextNodes.ToArray(), depth + 1, cancellationToken);
         }
     }
 
