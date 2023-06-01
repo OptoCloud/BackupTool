@@ -5,6 +5,7 @@ using OptoPacker.Database;
 using OptoPacker.Database.Models;
 using OptoPacker.DTOs;
 using OptoPacker.Utils;
+using System.Reflection;
 using System.Text;
 
 int ChunkSize = 128;
@@ -34,7 +35,7 @@ int i = 0;
 int cursorPos;
 Dictionary<string, PathTreeFile> files;
 List<int> prevLines = new List<int>();
-List<(string path, string hash)> FilesToAdd = new List<(string path, string hash)>();
+Dictionary<string, string> hashPathDict = new Dictionary<string, string>();
 using (var context = new OptoPackerContext(options))
 {
     context.Database.EnsureCreated();
@@ -68,9 +69,9 @@ using (var context = new OptoPackerContext(options))
                 Size = file.Size,
             };
             dbBlobs.Add(hash, blob);
+            hashPathDict.Add(hash, file.Path);
         }
         fileBlobPairs.Add((files[file.Path], blob));
-        FilesToAdd.Add((file.Path, hash));
         i++;
     }
 
@@ -110,20 +111,17 @@ if (File.Exists(archivePath))
     File.Delete(archivePath);
 }
 
-using FileStream sevenZipFile = File.Open(archivePath, FileMode.CreateNew);
+var assemblyDllPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!, "External\\7z.dll");
+SevenZip.SevenZipBase.SetLibraryPath(assemblyDllPath);
+SevenZip.SevenZipCompressor sevenZipCompressor = new SevenZip.SevenZipCompressor();
+sevenZipCompressor.CompressionMethod = SevenZip.CompressionMethod.Lzma2;
+sevenZipCompressor.CompressionLevel = SevenZip.CompressionLevel.High;
+sevenZipCompressor.CompressionMode = SevenZip.CompressionMode.Create;
+sevenZipCompressor.IncludeEmptyDirectories = false;
 
-/*
-// Add database
-archive.CreateEntry("index.sqlite", dbPath);
+sevenZipCompressor.CompressFiles(archivePath, hashPathDict.Values.ToArray()); // ERROR: Throws DLL not found exception
 
-// Add all other files
-foreach (var (path, hash) in FilesToAdd)
-{
-    archive.CreateEntry(hash[..2] + '/' + hash, path);
-}
-
-archive.Save(sevenZipFile);
-*/
+// TODO: rename files to hashes inside archive
 
 void printStatusReport(MultiFileStatusReport summary)
 {

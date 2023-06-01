@@ -9,13 +9,11 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="7.0.4" />
+    <PackageReference Include="Squid-Box.SevenZipSharp" Version="1.6.1.23" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="External\7z.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="External\7z.exe">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Unity.gitignore">
