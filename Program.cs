@@ -5,6 +5,7 @@ using OptoPacker.Database;
 using OptoPacker.Database.Models;
 using OptoPacker.DTOs;
 using OptoPacker.Utils;
+using System.IO.Compression;
 using System.Reflection;
 using System.Text;
 
@@ -15,7 +16,7 @@ int hashingBlockSize = 4096;
 List<IImportable> imports = new List<IImportable>()
 {
     //new ImportFolder( @"H:\"),
-    new ImportFolder( @"D:\User\Downloads"),
+    new ImportFolder( @"D:\3D Projects"),
 };
 
 // Get path to temp folder, and create sqlite database
@@ -105,23 +106,20 @@ SqliteConnection.ClearAllPools();
 GC.Collect();
 GC.WaitForPendingFinalizers();
 
-string archivePath = "D:\\archive.7z";
+string archivePath = "D:\\archive.zip";
 if (File.Exists(archivePath))
 {
     File.Delete(archivePath);
 }
 
-var assemblyDllPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!, "External\\7z.dll");
-SevenZip.SevenZipBase.SetLibraryPath(assemblyDllPath);
-SevenZip.SevenZipCompressor sevenZipCompressor = new SevenZip.SevenZipCompressor();
-sevenZipCompressor.CompressionMethod = SevenZip.CompressionMethod.Lzma2;
-sevenZipCompressor.CompressionLevel = SevenZip.CompressionLevel.High;
-sevenZipCompressor.CompressionMode = SevenZip.CompressionMode.Create;
-sevenZipCompressor.IncludeEmptyDirectories = false;
-
-sevenZipCompressor.CompressFiles(archivePath, hashPathDict.Values.ToArray()); // ERROR: Throws DLL not found exception
-
-// TODO: rename files to hashes inside archive
+using var zipFile = ZipFile.Open(archivePath, ZipArchiveMode.Create);
+foreach (var item in hashPathDict)
+{
+    string hash = item.Key;
+    zipFile.CreateEntryFromFile(item.Value, $"files/{hash[..2]}/{hash}");
+}
+zipFile.CreateEntryFromFile(dbPath, "index.db");
+File.Delete(dbPath);
 
 void printStatusReport(MultiFileStatusReport summary)
 {
