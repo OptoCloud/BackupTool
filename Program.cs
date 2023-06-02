@@ -5,6 +5,7 @@ using OptoPacker.Database;
 using OptoPacker.Database.Models;
 using OptoPacker.DTOs;
 using OptoPacker.Utils;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.Text;
@@ -12,6 +13,7 @@ using System.Text;
 int ChunkSize = 128;
 int ParallelTasks = Environment.ProcessorCount;
 int hashingBlockSize = 4 * 1024 * 1024;
+int compressionLevel = 9; // 0-9
 
 var imports = new List<IImportable>()
 {
@@ -25,8 +27,9 @@ string dbPath = Path.Combine(tempPath, "OptoPacker.db");
 string archivePath = "D:\\archive.7z";
 
 int cursorPos;
-uint filesComplete = 0;
-ulong bytesProcessed = 0;
+uint filesWrittenToDb = 0;
+ulong filesWrittenToTar = 0;
+ulong bytesWrittenToTar = 0;
 List<int> prevLines = new List<int>();
 Dictionary<string, PathTreeFile> files;
 
@@ -34,7 +37,7 @@ Dictionary<string, PathTreeFile> files;
 using (var process = new Process())
 {
     process.StartInfo.FileName = "7z"; // Path to 7z executable
-    process.StartInfo.Arguments = $"a -t7z \"{archivePath}\" -si\"data.tar\" -mx=5 -m0=lzma2 -aoa";
+    process.StartInfo.Arguments = $"a -t7z \"{archivePath}\" -si\"data.tar\" -mx={compressionLevel} -m0=lzma2 -aoa";
     process.StartInfo.RedirectStandardInput = true;
     process.StartInfo.UseShellExecute = false;
     process.Start();
@@ -50,6 +53,23 @@ using (var process = new Process())
         var options = new DbContextOptionsBuilder<OptoPackerContext>()
             .UseSqlite($"Data Source={dbPath}")
             .Options;
+
+        bool runTarWriter = true;
+        ConcurrentQueue<(string, byte[], ulong)> tarWriterQueue = new ConcurrentQueue<(string, byte[], ulong)> ();
+        var tarWritingTask = Task.Run(async () =>
+        {
+            while (runTarWriter)
+            {
+                while (tarWriterQueue.TryDequeue(out (string path, byte[] hash, ulong size) entry))
+                {
+                    string hash = Utilss.BytesToHex(entry.hash);
+                    await tarWriter.WriteEntryAsync(entry.path, $"files/{hash[..2]}/{hash}");
+                    Interlocked.Increment(ref filesWrittenToTar);
+                    Interlocked.Add(ref bytesWrittenToTar, entry.size);
+                }
+                await Task.Delay(100);
+            }
+        });
 
         using (var context = new OptoPackerContext(options))
         {
@@ -70,9 +90,7 @@ using (var process = new Process())
             files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
             await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync(files.Keys.ToArray(), printStatusReport, hashingBlockSize, ChunkSize, ParallelTasks))
             {
-                string hash = Utilss.BytesToHex(file.Hash);
-
-                var tarWriterTask = tarWriter.WriteEntryAsync(file.Path, $"files/{hash[..2]}/{hash}");
+                tarWriterQueue.Enqueue((file.Path, file.Hash, file.Size));
 
                 var blob = await context.Blobs.FirstOrDefaultAsync();
                 if (blob == null)
@@ -86,23 +104,21 @@ using (var process = new Process())
                     await context.SaveChangesAsync();
                 }
 
-                var filee = files[file.Path];
-                string name = filee.Name;
+                var pathTreefile = files[file.Path];
+                string name = pathTreefile.Name;
                 int extPos = name.LastIndexOf('.');
 
                 await context.Files.AddAsync(new FileEntity
                 {
                     BlobId = blob.Id,
-                    DirectoryId = filee.DirectoryId!.Value,
+                    DirectoryId = pathTreefile.DirectoryId!.Value,
                     Name = extPos > 0 ? name[..extPos] : name,
                     Extension = extPos > 0 ? name[(extPos + 1)..] : string.Empty,
                     Blob = blob,
                 });
                 await context.SaveChangesAsync();
 
-                await tarWriterTask;
-                filesComplete++;
-                bytesProcessed += file.Size;
+                filesWrittenToDb++;
             }
 
             await context.SaveChangesAsync();
@@ -112,6 +128,8 @@ using (var process = new Process())
         SqliteConnection.ClearAllPools();
         GC.Collect();
         GC.WaitForPendingFinalizers();
+
+        await tarWritingTask;
 
         // Add the database to the archive
         tarWriter.WriteEntry(dbPath, "index.db");
@@ -125,9 +143,12 @@ Console.WriteLine("Done!");
 
 void printStatusReport(MultiFileStatusReport summary)
 {
+    ulong filesWrittenToTarLocal = Interlocked.Read(ref filesWrittenToTar);
+    ulong bytesWrittenToTarLocal = Interlocked.Read(ref bytesWrittenToTar);
     printStatus(cursorPos, "Status:",
         $"   {summary.filesProcessed} / {files.Count} files hashed ({Utilss.FormatNumberByteSize(summary.bytesProcessed)} / {Utilss.FormatNumberByteSize(summary.bytesTotal)})",
-        $"   {filesComplete} / {files.Count} files archived ({Utilss.FormatNumberByteSize(bytesProcessed)} / {Utilss.FormatNumberByteSize(summary.bytesTotal)})",
+        $"   {filesWrittenToDb} / {files.Count} files written to DB",
+        $"   {filesWrittenToTarLocal} / {files.Count} files written to Tar ({Utilss.FormatNumberByteSize(bytesWrittenToTarLocal)} / {Utilss.FormatNumberByteSize(summary.bytesTotal)})",
         $"   Average files size: {Utilss.FormatNumberByteSize(summary.bytesTotal / summary.filesTotal)}"
         );
 }
