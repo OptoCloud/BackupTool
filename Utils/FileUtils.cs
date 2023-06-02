@@ -2,17 +2,16 @@
 using OptoPacker.DTOs;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System;
 
 namespace OptoPacker.Utils;
 
 public static class FileUtils
 {
     const int ReportBytesInterval = 1024 * 1024 * 10; // 10 MB
-    private static readonly byte[] EmptyDataHash = new byte[] {
-        0xE3, 0xB0, 0xC4, 0x42, 0x98, 0xFC, 0x1C, 0x14, 0x9A, 0xFB, 0xF4, 0xC8, 0x99, 0x6F, 0xB9, 0x24, 0x27, 0xAE, 0x41, 0xE4, 0x64, 0x9B, 0x93, 0x4C, 0xA4, 0x95, 0x99, 0x1B, 0x78, 0x52, 0xB8, 0x55
-    };
+    
 
-    private static async Task<byte[]?> HashAsync(FileStream fileStream, SingleFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, CancellationToken cancellationToken = default)
+    private static async Task<byte[]?> HashAsync(FileStream fileStream, SingleFileStatusReportFunc statusReportFunc, int hashingBlockSize, CancellationToken cancellationToken = default)
     {
         if (!fileStream.CanRead) return null;
 
@@ -24,10 +23,10 @@ public static class FileUtils
         ulong lastReportBytesRead = 0;
         do
         {
-            bytesReadChunk = await fileStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
+            bytesReadChunk = await fileStream.ReadAsync(buffer, cancellationToken);
             if (bytesReadChunk > 0)
             {
-                sha256.TransformBlock(buffer, 0, bytesReadChunk, buffer, 0);
+                _ = sha256.TransformBlock(buffer, 0, bytesReadChunk, buffer, 0);
 
                 bytesReadTotal += (ulong)bytesReadChunk;
                 if (bytesReadTotal - lastReportBytesRead >= ReportBytesInterval)
@@ -42,17 +41,7 @@ public static class FileUtils
 
         return sha256.Hash;
     }
-    public static async Task<(byte[]? hash, long length)> HashAsync(string path, SingleFileStatusReportFunc statusReportFunc, int chunkSize = 4096, CancellationToken cancellationToken = default)
-    {
-        using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, chunkSize, true);
-
-        byte[]? hash = await HashAsync(stream, statusReportFunc, chunkSize, cancellationToken);
-
-        return (hash, stream.Length);
-    }
-    private static ProcessedFileInfo EmptyInputFileInfo(string path) => new ProcessedFileInfo(path, 0, EmptyDataHash);
-    private static ProcessedFileInfo ErrorInputFileInfo(string path, ulong size, string error) => new ProcessedFileInfo(path, size, Array.Empty<byte>(), error);
-    public static async IAsyncEnumerable<ProcessedFileInfo> HashAllAsync(string[] filePaths, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize = 4096, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public static async IAsyncEnumerable<ProcessedFileInfo> HashAllAsync(string[] filePaths, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         MultiFileStatusReport statusReport = new MultiFileStatusReport((uint)filePaths.Length, 0, 0, 0, 0);
         void subStatusReportFunc(ulong bytesRead)
@@ -94,7 +83,7 @@ public static class FileUtils
 
             if (fileStream == null)
             {
-                yield return ErrorInputFileInfo(path, 0, error ?? "Unkown error while opening file");
+                yield return ProcessedFileInfo.ErrorInfo(path, 0, error ?? "Unkown error while opening file");
                 statusReport.filesFailed++;
                 continue;
             }
@@ -112,7 +101,7 @@ public static class FileUtils
 
             if (fileSize == 0)
             {
-                yield return EmptyInputFileInfo(path);
+                yield return ProcessedFileInfo.EmptyInfo(path);
                 statusReport.filesProcessed++;
                 continue;
             }
@@ -132,14 +121,14 @@ public static class FileUtils
             if (error != null)
             {
                 if (error == string.Empty) error = "Unknown error while hashing file";
-                yield return ErrorInputFileInfo(path, fileSize, error);
+                yield return ProcessedFileInfo.ErrorInfo(path, fileSize, error);
                 statusReport.filesFailed++;
                 continue;
             }
 
             if (hash == null)
             {
-                yield return ErrorInputFileInfo(path, fileSize, "Failed to hash file (unknown error)");
+                yield return ProcessedFileInfo.ErrorInfo(path, fileSize, "Failed to hash file (unknown error)");
                 statusReport.filesFailed++;
                 continue;
             }

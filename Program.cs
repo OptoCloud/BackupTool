@@ -11,9 +11,9 @@ using System.Text;
 
 int ChunkSize = 128;
 int ParallelTasks = Environment.ProcessorCount;
-int hashingBlockSize = 4096;
+int hashingBlockSize = 4 * 1024 * 1024;
 
-List<IImportable> imports = new List<IImportable>()
+var imports = new List<IImportable>()
 {
     //new ImportFolder( @"H:\"),
     new ImportFolder( @"D:\3D Projects"),
@@ -36,7 +36,7 @@ int i = 0;
 int cursorPos;
 Dictionary<string, PathTreeFile> files;
 List<int> prevLines = new List<int>();
-Dictionary<string, string> hashPathDict = new Dictionary<string, string>();
+var hashPathDict = new Dictionary<string, string>();
 using (var context = new OptoPackerContext(options))
 {
     context.Database.EnsureCreated();
@@ -45,7 +45,7 @@ using (var context = new OptoPackerContext(options))
     var importFiles = imports.Select(x => new PathTree(x.BasePath).AddMany(x.GetFiles())).ToArray();
 
     Console.WriteLine("Creating directory database entries...");
-    List<FlattenedPathTreeLevel> levels = new List<FlattenedPathTreeLevel>();
+    var levels = new List<FlattenedPathTreeLevel>();
     foreach (var importFile in importFiles)
     {
         await importFile.DbCreateDirectoriesAsync(context);
@@ -55,8 +55,8 @@ using (var context = new OptoPackerContext(options))
     Console.WriteLine("Hashing files... (This might take a couple minutes)");
     cursorPos = Console.CursorTop;
     files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
-    Dictionary<string, BlobEntity> dbBlobs = new Dictionary<string, BlobEntity>();
-    List<(PathTreeFile file, BlobEntity blob)> fileBlobPairs = new List<(PathTreeFile file, BlobEntity blob)>();
+    var dbBlobs = new Dictionary<string, BlobEntity>();
+    var fileBlobPairs = new List<(PathTreeFile file, BlobEntity blob)>();
     await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync(files.Keys.ToArray(), printStatusReport, hashingBlockSize, ChunkSize, ParallelTasks))
     {
         string hash = Utilss.BytesToHex(file.Hash);
@@ -81,7 +81,7 @@ using (var context = new OptoPackerContext(options))
     await context.SaveChangesAsync();
 
     Console.WriteLine("Assigning file blobIds...");
-    List<FileEntity> dbFiles = new List<FileEntity>();
+    var dbFiles = new List<FileEntity>();
     foreach (var (file, blob) in fileBlobPairs)
     {
         string name = file.Name;
@@ -92,7 +92,8 @@ using (var context = new OptoPackerContext(options))
             BlobId = blob.Id,
             DirectoryId = file.DirectoryId!.Value,
             Name = extPos > 0 ? name[..extPos] : name,
-            Extension = extPos > 0 ? name[(extPos + 1)..] : string.Empty
+            Extension = extPos > 0 ? name[(extPos + 1)..] : string.Empty,
+            Blob = blob,
         });
     }
 
@@ -106,9 +107,9 @@ SqliteConnection.ClearAllPools();
 GC.Collect();
 GC.WaitForPendingFinalizers();
 
-string archivePath = "D:\\archive.zip";
+string archivePath = "D:\\archive.7z";
 // Start the 7-Zip process
-using (Process process = new Process())
+using (var process = new Process())
 {
     process.StartInfo.FileName = "7z"; // Path to 7z executable
     process.StartInfo.Arguments = $"a -t7z \"{archivePath}\" -si\"data.tar\" -mx=9 -m0=lzma2 -aoa";
@@ -116,7 +117,7 @@ using (Process process = new Process())
     process.StartInfo.UseShellExecute = false;
     process.Start();
 
-    using (TarWriter tarWriter = new TarWriter(process.StandardInput.BaseStream))
+    using (var tarWriter = new TarWriter(process.StandardInput.BaseStream))
     {
         // Iterate over the hashPathDict and add entries to the tar archive
         foreach (var item in hashPathDict)

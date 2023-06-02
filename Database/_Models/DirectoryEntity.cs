@@ -10,7 +10,7 @@ public sealed class DirectoryEntity
     public static string RootName => "root";
 
     public ulong Id { get; set; }
-    public string Name { get; set; }
+    public required string Name { get; set; }
     public ulong? ParentId { get; set; }
     public DirectoryEntity? Parent { get; set; }
     public ICollection<DirectoryEntity>? Children { get; set; }
