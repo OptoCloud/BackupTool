@@ -39,6 +39,7 @@ using (var process = new Process())
     process.StartInfo.FileName = "7z"; // Path to 7z executable
     process.StartInfo.Arguments = $"a -t7z \"{archivePath}\" -si\"data.tar\" -mx={compressionLevel} -m0=lzma2 -aoa";
     process.StartInfo.RedirectStandardInput = true;
+    process.StartInfo.RedirectStandardOutput = true;
     process.StartInfo.UseShellExecute = false;
     process.Start();
 
@@ -135,6 +136,7 @@ using (var process = new Process())
         tarWriter.WriteEntry(dbPath, "index.db");
     }
 
+    _ = process.StandardOutput.ReadToEnd();
     process.WaitForExit();
 }
 File.Delete(dbPath);
