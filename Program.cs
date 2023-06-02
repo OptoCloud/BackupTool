@@ -5,8 +5,8 @@ using OptoPacker.Database;
 using OptoPacker.Database.Models;
 using OptoPacker.DTOs;
 using OptoPacker.Utils;
-using System.IO.Compression;
-using System.Reflection;
+using System.Diagnostics;
+using System.Formats.Tar;
 using System.Text;
 
 int ChunkSize = 128;
@@ -107,18 +107,31 @@ GC.Collect();
 GC.WaitForPendingFinalizers();
 
 string archivePath = "D:\\archive.zip";
-if (File.Exists(archivePath))
+// Start the 7-Zip process
+using (Process process = new Process())
 {
-    File.Delete(archivePath);
-}
+    process.StartInfo.FileName = "7z"; // Path to 7z executable
+    process.StartInfo.Arguments = $"a -t7z \"{archivePath}\" -si\"data.tar\" -mx=9 -m0=lzma2 -aoa";
+    process.StartInfo.RedirectStandardInput = true;
+    process.StartInfo.UseShellExecute = false;
+    process.Start();
 
-using var zipFile = ZipFile.Open(archivePath, ZipArchiveMode.Create);
-foreach (var item in hashPathDict)
-{
-    string hash = item.Key;
-    zipFile.CreateEntryFromFile(item.Value, $"files/{hash[..2]}/{hash}");
+    using (TarWriter tarWriter = new TarWriter(process.StandardInput.BaseStream))
+    {
+        // Iterate over the hashPathDict and add entries to the tar archive
+        foreach (var item in hashPathDict)
+        {
+            string hash = item.Key;
+            string filePath = item.Value;
+            tarWriter.WriteEntry(filePath, $"files/{hash[..2]}/{hash}");
+        }
+
+        // Add the database to the archive
+        tarWriter.WriteEntry(dbPath, "index.db");
+    }
+
+    process.WaitForExit();
 }
-zipFile.CreateEntryFromFile(dbPath, "index.db");
 File.Delete(dbPath);
 
 void printStatusReport(MultiFileStatusReport summary)
