@@ -43,16 +43,16 @@ public static class FileUtils
     }
     public static async IAsyncEnumerable<ProcessedFileInfo> HashAllAsync(string[] filePaths, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        MultiFileStatusReport statusReport = new MultiFileStatusReport((uint)filePaths.Length, 0, 0, 0, 0);
+        var statusReport = new MultiFileStatusReport((uint)filePaths.Length, 0, 0, 0, 0);
         void subStatusReportFunc(ulong bytesRead)
         {
             statusReportFunc.Invoke(statusReport with
             {
-                bytesProcessed = statusReport.bytesProcessed + bytesRead
+                BytesProcessed = statusReport.BytesProcessed + bytesRead
             });
         }
 
-        List<(string path, FileStream fileStream)> files = new List<(string path, FileStream fileStream)>();
+        List<(string path, FileStream fileStream)> files = [];
         foreach (string path in filePaths)
         {
             string? error = null;
@@ -84,14 +84,14 @@ public static class FileUtils
             if (fileStream == null)
             {
                 yield return ProcessedFileInfo.ErrorInfo(path, 0, error ?? "Unkown error while opening file");
-                statusReport.filesFailed++;
+                statusReport.FilesFailed++;
                 continue;
             }
 
             files.Add((path, fileStream));
         }
 
-        statusReport.bytesTotal = (ulong)files.Sum(f => f.fileStream.Length);
+        statusReport.BytesTotal = (ulong)files.Sum(f => f.fileStream.Length);
 
         foreach ((string path, FileStream fileStream) in files)
         {
@@ -102,7 +102,7 @@ public static class FileUtils
             if (fileSize == 0)
             {
                 yield return ProcessedFileInfo.EmptyInfo(path);
-                statusReport.filesProcessed++;
+                statusReport.FilesProcessed++;
                 continue;
             }
 
@@ -111,7 +111,7 @@ public static class FileUtils
             try
             {
                 hash = await HashAsync(fileStream, subStatusReportFunc, hashingBlockSize, cancellationToken);
-                statusReport.bytesProcessed += fileSize;
+                statusReport.BytesProcessed += fileSize;
             }
             catch (Exception ex)
             {
@@ -122,19 +122,19 @@ public static class FileUtils
             {
                 if (error == string.Empty) error = "Unknown error while hashing file";
                 yield return ProcessedFileInfo.ErrorInfo(path, fileSize, error);
-                statusReport.filesFailed++;
+                statusReport.FilesFailed++;
                 continue;
             }
 
             if (hash == null)
             {
                 yield return ProcessedFileInfo.ErrorInfo(path, fileSize, "Failed to hash file (unknown error)");
-                statusReport.filesFailed++;
+                statusReport.FilesFailed++;
                 continue;
             }
 
             yield return new ProcessedFileInfo(path, fileSize, hash);
-            statusReport.filesProcessed++;
+            statusReport.FilesProcessed++;
         }
 
         foreach ((string path, FileStream fileStream) in files) fileStream?.Dispose();

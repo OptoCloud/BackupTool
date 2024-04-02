@@ -15,23 +15,24 @@ int ParallelTasks = Environment.ProcessorCount;
 int hashingBlockSize = 4 * 1024 * 1024;
 int compressionLevel = 9; // 0-9
 
-var imports = new List<IImportable>()
-{
+List<IImportable> imports = [
     //new ImportFolder( @"H:\"),
     new ImportFolder( @"D:\3D Projects"),
-};
+];
 
 // Get path to temp folder, and create sqlite database
 string tempPath = Path.GetTempPath();
 string dbPath = Path.Combine(tempPath, "OptoPacker.db");
 string archivePath = "D:\\archive.7z";
 
-int cursorPos;
+int cursorPos = 0;
 uint filesWrittenToDb = 0;
 ulong filesWrittenToTar = 0;
 ulong bytesWrittenToTar = 0;
-List<int> prevLines = new List<int>();
-Dictionary<string, PathTreeFile> files;
+List<int> prevLines = [];
+Dictionary<string, PathTreeFile> files = [];
+
+var lastSummary = new MultiFileStatusReport();
 
 // Start the 7-Zip process
 using (var process = new Process())
@@ -55,11 +56,11 @@ using (var process = new Process())
             .UseSqlite($"Data Source={dbPath}")
             .Options;
 
-        bool runTarWriter = true;
-        ConcurrentQueue<(string, byte[], ulong)> tarWriterQueue = new ConcurrentQueue<(string, byte[], ulong)> ();
+        bool importingFiles = true;
+        var tarWriterQueue = new ConcurrentQueue<(string, byte[], ulong)>();
         var tarWritingTask = Task.Run(async () =>
         {
-            while (runTarWriter)
+            while (importingFiles)
             {
                 while (tarWriterQueue.TryDequeue(out (string path, byte[] hash, ulong size) entry))
                 {
@@ -67,7 +68,13 @@ using (var process = new Process())
                     await tarWriter.WriteEntryAsync(entry.path, $"files/{hash[..2]}/{hash}");
                     Interlocked.Increment(ref filesWrittenToTar);
                     Interlocked.Add(ref bytesWrittenToTar, entry.size);
+
+                    if (!importingFiles)
+                    {
+                        printStatusReport();
+                    }
                 }
+
                 await Task.Delay(100);
             }
         });
@@ -80,7 +87,7 @@ using (var process = new Process())
             var importFiles = imports.Select(x => new PathTree(x.BasePath).AddMany(x.GetFiles())).ToArray();
 
             Console.WriteLine("Creating directory database entries...");
-            var levels = new List<FlattenedPathTreeLevel>();
+            List<FlattenedPathTreeLevel> levels = [];
             foreach (var importFile in importFiles)
             {
                 await importFile.DbCreateDirectoriesAsync(context);
@@ -89,7 +96,7 @@ using (var process = new Process())
             Console.WriteLine("Hashing files... (This might take a couple minutes)");
             cursorPos = Console.CursorTop;
             files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
-            await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync(files.Keys.ToArray(), printStatusReport, hashingBlockSize, ChunkSize, ParallelTasks))
+            await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync([.. files.Keys], printStatusReportU, hashingBlockSize, ChunkSize, ParallelTasks))
             {
                 tarWriterQueue.Enqueue((file.Path, file.Hash, file.Size));
 
@@ -130,6 +137,8 @@ using (var process = new Process())
         GC.Collect();
         GC.WaitForPendingFinalizers();
 
+        importingFiles = false;
+
         await tarWritingTask;
 
         // Add the database to the archive
@@ -143,16 +152,23 @@ File.Delete(dbPath);
 
 Console.WriteLine("Done!");
 
-void printStatusReport(MultiFileStatusReport summary)
+void printStatusReport()
 {
     ulong filesWrittenToTarLocal = Interlocked.Read(ref filesWrittenToTar);
     ulong bytesWrittenToTarLocal = Interlocked.Read(ref bytesWrittenToTar);
+
+    string bytesTotalFormatted = Utilss.FormatNumberByteSize(lastSummary.BytesTotal);
     printStatus(cursorPos, "Status:",
-        $"   {summary.filesProcessed} / {files.Count} files hashed ({Utilss.FormatNumberByteSize(summary.bytesProcessed)} / {Utilss.FormatNumberByteSize(summary.bytesTotal)})",
+        $"   {lastSummary.FilesProcessed} / {files.Count} files hashed ({Utilss.FormatNumberByteSize(lastSummary.BytesProcessed)} / {bytesTotalFormatted})",
         $"   {filesWrittenToDb} / {files.Count} files written to DB",
-        $"   {filesWrittenToTarLocal} / {files.Count} files written to Tar ({Utilss.FormatNumberByteSize(bytesWrittenToTarLocal)} / {Utilss.FormatNumberByteSize(summary.bytesTotal)})",
-        $"   Average files size: {Utilss.FormatNumberByteSize(summary.bytesTotal / summary.filesTotal)}"
+        $"   {filesWrittenToTarLocal} / {files.Count} files written to Tar ({Utilss.FormatNumberByteSize(bytesWrittenToTarLocal)} / {bytesTotalFormatted})",
+        $"   Average files size: {Utilss.FormatNumberByteSize(lastSummary.BytesTotal / lastSummary.FilesTotal)}"
         );
+}
+void printStatusReportU(MultiFileStatusReport summary)
+{
+    lastSummary = summary;
+    printStatusReport();
 }
 void printStatus(int basePos, string title, params string[] lines)
 {
@@ -161,7 +177,7 @@ void printStatus(int basePos, string title, params string[] lines)
     Console.CursorTop = basePos;
     Console.CursorLeft = 0;
 
-    StringBuilder sb = new StringBuilder();
+    var sb = new StringBuilder();
 
     if (prevLines[0] > title.Length) title = title.PadRight(prevLines[0]);
     sb.AppendLine(title);
@@ -179,4 +195,4 @@ void printStatus(int basePos, string title, params string[] lines)
 }
 
 sealed record FlattenedPathTreeLevel(List<FlattenedPathTreeChunk> Chunks);
-sealed record FlattenedPathTreeChunk(ulong? parentId, string? parentName, string[] childrenNames);
+sealed record FlattenedPathTreeChunk(ulong? ParentId, string? ParentName, string[] ChildrenNames);

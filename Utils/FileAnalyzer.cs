@@ -7,8 +7,8 @@ internal static class FileAnalyzer
     private const int AnalysisCacheDifferenceFactor = 20;
 
     private record struct FileAnalysisResult(int AsciiCount, int UnicodeCount, int UnknownCount);
-    private static readonly FileAnalysisResult DefaultAnalysisResult = new FileAnalysisResult(0, 0, 0);
-    private static readonly Dictionary<string, FileAnalysisResult> FileAnalysisCache = new Dictionary<string, FileAnalysisResult>();
+    private static readonly FileAnalysisResult DefaultAnalysisResult = new(0, 0, 0);
+    private static readonly Dictionary<string, FileAnalysisResult> FileAnalysisCache = [];
 
     private static FileAnalysisResult GetAnalysisResult(string ext)
     {
@@ -129,9 +129,9 @@ internal static class FileAnalyzer
 
         if (!TryGetAnalysisResultAndSummary(fileExtension, out var result, out var summary))
         {
-            using FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using BufferedStream bs = new BufferedStream(fs);
-            using BinaryReader br = new BinaryReader(bs);
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var bs = new BufferedStream(fs);
+            using var br = new BinaryReader(bs);
 
             byte[] bytes = br.ReadBytes(AnalyzeSize);
 

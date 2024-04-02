@@ -52,11 +52,11 @@ public sealed class PathTree
 
     public Task DbCreateDirectoriesAsync(OptoPackerContext dbCtx, CancellationToken cancellationToken = default)
     {
-        return DbCreateDirectoriesAsync(dbCtx, new PathTreeDirectory[] { Root }, 0, cancellationToken);
+        return DbCreateDirectoriesAsync(dbCtx, [Root], 0, cancellationToken);
     }
     private static async Task DbCreateDirectoriesAsync(OptoPackerContext dbCtx, PathTreeDirectory[] nodes, int depth, CancellationToken cancellationToken)
     {
-        List<PathTreeDirectory> nextNodes = new List<PathTreeDirectory>();
+        List<PathTreeDirectory> nextNodes = [];
         
         // Shallow first, add all directories, then save changes
         foreach (var node in nodes)
@@ -77,7 +77,7 @@ public sealed class PathTree
         // Recurse
         if (nextNodes.Count > 0)
         {
-            await DbCreateDirectoriesAsync(dbCtx, nextNodes.ToArray(), depth + 1, cancellationToken);
+            await DbCreateDirectoriesAsync(dbCtx, [.. nextNodes], depth + 1, cancellationToken);
         }
     }
 
@@ -104,22 +104,14 @@ public sealed class PathTree
     public PathTreeDirectory this[string filePath] => GetOrAdd(filePath);
 }
 
-public sealed class PathTreeDirectory
+public sealed class PathTreeDirectory(string name, PathTreeDirectory? parent)
 {
     public ulong? Id { get; set; } = null;
-    public string Name { get; }
-    public PathTreeDirectory? Parent { get; }
+    public string Name { get; } = name;
+    public PathTreeDirectory? Parent { get; } = parent;
     public ulong? ParentId => Parent?.Id;
-    public List<PathTreeDirectory> Children { get; }
-    public List<PathTreeFile> Files { get; }
-
-    public PathTreeDirectory(string name, PathTreeDirectory? parent)
-    {
-        Name = name;
-        Parent = parent;
-        Children = new List<PathTreeDirectory>();
-        Files = new List<PathTreeFile>();
-    }
+    public List<PathTreeDirectory> Children { get; } = [];
+    public List<PathTreeFile> Files { get; } = [];
 
     public PathTreeDirectory GetOrAddChild(string name)
     {
@@ -138,20 +130,13 @@ public sealed class PathTreeDirectory
         Files.Add(new PathTreeFile(filePath, originalPath, this));
     }
 }
-public sealed class PathTreeFile
+public sealed class PathTreeFile(string name, string originalPath, PathTreeDirectory directory)
 {
     public ulong? Id { get; set; } = null;
-    public string Name { get; }
-    public string OriginalPath { get; }
-    public PathTreeDirectory Directory { get; }
+    public string Name { get; } = name;
+    public string OriginalPath { get; } = originalPath;
+    public PathTreeDirectory Directory { get; } = directory;
     public ulong? DirectoryId => Directory.Id;
     public ulong Size { get; set; } = 0;
-    public byte[] Hash { get; set; } = Array.Empty<byte>();
-
-    public PathTreeFile(string name, string originalPath, PathTreeDirectory directory)
-    {
-        Name = name;
-        OriginalPath = originalPath;
-        Directory = directory;
-    }
+    public byte[] Hash { get; set; } = [];
 }

@@ -71,7 +71,7 @@ internal static class GitignoreParser
                         return null;
                     }
 
-                    StringBuilder subSb = new StringBuilder();
+                    var subSb = new StringBuilder();
 
                     switch (c = str[i++])
                     {
@@ -225,7 +225,7 @@ internal static class GitignoreParser
         {
         }
 
-        return Array.Empty<GitRegex>();
+        return [];
     }
 
     private record struct DirectoryEntry(string Path, bool IsDirectory);
@@ -320,6 +320,6 @@ internal static class GitignoreParser
     }
     public static IEnumerable<string> GetTrackedFiles(string basePath, CancellationToken cancellationToken)
     {
-        return Crawl(basePath, Array.Empty<GitRegex>(), cancellationToken);
+        return Crawl(basePath, [], cancellationToken);
     }
 }

@@ -1,15 +1,15 @@
 ﻿namespace OptoPacker.DTOs;
 
-public record struct MultiFileStatusReport(uint filesTotal, uint filesProcessed, uint filesFailed, ulong bytesTotal, ulong bytesProcessed)
+public record struct MultiFileStatusReport(uint FilesTotal, uint FilesProcessed, uint FilesFailed, ulong BytesTotal, ulong BytesProcessed)
 {
     public static MultiFileStatusReport operator +(MultiFileStatusReport a, MultiFileStatusReport b)
     {
         return new MultiFileStatusReport(
-            a.filesTotal + b.filesTotal,
-            a.filesProcessed + b.filesProcessed,
-            a.filesFailed + b.filesFailed,
-            a.bytesTotal + b.bytesTotal,
-            a.bytesProcessed + b.bytesProcessed
+            a.FilesTotal + b.FilesTotal,
+            a.FilesProcessed + b.FilesProcessed,
+            a.FilesFailed + b.FilesFailed,
+            a.BytesTotal + b.BytesTotal,
+            a.BytesProcessed + b.BytesProcessed
             );
     }
 }

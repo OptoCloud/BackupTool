@@ -12,7 +12,7 @@ internal static class DirectoryUtils
         }
         catch (Exception)
         {
-            files = Array.Empty<string>();
+            files = [];
         }
 
         foreach (string file in files)
@@ -31,7 +31,7 @@ internal static class DirectoryUtils
         }
         catch (Exception)
         {
-            directories = Array.Empty<string>();
+            directories = [];
         }
 
         foreach (string directory in directories)

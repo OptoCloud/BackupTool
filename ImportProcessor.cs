@@ -10,14 +10,14 @@ internal static class ImportProcessor
 {
     private static async Task FileProcessorJob(int hashingBlockSize, MultiFileStatusReportFunc statusReportFunc, ConcurrentBag<string[]> inputBag, ConcurrentBag<ProcessedFileInfo[]> outputBag, CancellationToken cancellationToken)
     {
-        MultiFileStatusReport localReport = new MultiFileStatusReport(0, 0, 0, 0, 0);
+        var localReport = new MultiFileStatusReport(0, 0, 0, 0, 0);
 
 
         while (inputBag.TryTake(out string[]? chunk))
         {
-            MultiFileStatusReport chunkReport = new MultiFileStatusReport((uint)chunk.Length, 0, 0, 0, 0);
+            var chunkReport = new MultiFileStatusReport((uint)chunk.Length, 0, 0, 0, 0);
 
-            ProcessedFileInfo[] output = new ProcessedFileInfo[chunk.Length];
+            var output = new ProcessedFileInfo[chunk.Length];
 
             void subStatusReportFunc(MultiFileStatusReport report)
             {
@@ -30,7 +30,7 @@ internal static class ImportProcessor
                 output[j++] = file;
             }
 
-            outputBag.Add(j == chunk.Length ? output : output[..j]);
+            outputBag.Add(j == output.Length ? output : output[..j]);
             localReport += chunkReport;
         }
     }
@@ -40,10 +40,10 @@ internal static class ImportProcessor
         // Default to number of logical cores
         parallelism = parallelism == -1 ? Environment.ProcessorCount : parallelism;
 
-        Task[] jobs = new Task[parallelism];
-        ConcurrentBag<string[]> inputChunksBag = new ConcurrentBag<string[]>(files.Chunk(chunkingSize));
-        ConcurrentBag<ProcessedFileInfo[]> outputChunksBag = new ConcurrentBag<ProcessedFileInfo[]>();
-        MultiFileStatusReport[] jobStatuses = new MultiFileStatusReport[parallelism];
+        var jobs = new Task[parallelism];
+        var inputChunksBag = new ConcurrentBag<string[]>(files.Chunk(chunkingSize));
+        var outputChunksBag = new ConcurrentBag<ProcessedFileInfo[]>();
+        var jobStatuses = new MultiFileStatusReport[parallelism];
 
         for (int i = 0; i < jobs.Length; i++)
         {
@@ -53,7 +53,7 @@ internal static class ImportProcessor
                 jobStatuses[jobIndex] = report;
                 lock (jobStatuses)
                 {
-                    statusReportFunc(jobStatuses.Aggregate((a, b) => a + b) with { filesTotal = (uint)files.Length });
+                    statusReportFunc(jobStatuses.Aggregate((a, b) => a + b) with { FilesTotal = (uint)files.Length });
                 }
             }
             jobs[i] = FileProcessorJob(hashingBlockSize, subStatusReportFunc, inputChunksBag, outputChunksBag, cancellationToken);
@@ -84,7 +84,7 @@ internal static class ImportProcessor
         {
             void subStatusReportFunc(MultiFileStatusReport report)
             {
-                statusReportFunc((aggregatedStatus + report) with { filesTotal = (uint)files.Length });
+                statusReportFunc((aggregatedStatus + report) with { FilesTotal = (uint)files.Length });
             }
             await foreach (ProcessedFileInfo file in FileUtils.HashAllAsync(chunk, subStatusReportFunc, hashingBlockSize, cancellationToken))
             {
