@@ -46,6 +46,7 @@ internal sealed class Importer
                 Console.CursorLeft = cursorPos;
                 Console.Write(++numFiles);
             }
+            Console.WriteLine("\nDone.");
         }
     }
 }

@@ -20,10 +20,18 @@ string tempPath = Path.Combine(Path.GetTempPath(), "OptoPacker", Guid.NewGuid().
 string dbPath = Path.Combine(tempPath, "index.db");
 string archivePath = "D:\\archive.7z";
 
+// Create temp folder if it doesn't exist
+if (!Directory.Exists(tempPath))
+{
+    Directory.CreateDirectory(tempPath);
+}
+
 var importer = new Importer();
 
 // importer.ImportFileOrFolder(@"H:\");
 importer.ImportFileOrFolder(@"D:\3D Projects");
+
+ulong logLock = 0;
 
 int cursorPos = 0;
 uint filesWrittenToDb = 0;
@@ -69,10 +77,7 @@ using (var process = new Process())
                     Interlocked.Increment(ref filesWrittenToTar);
                     Interlocked.Add(ref bytesWrittenToTar, entry.size);
 
-                    if (!importingFiles)
-                    {
-                        printStatusReport();
-                    }
+                    printStatusReport();
                 }
 
                 await Task.Delay(100);
@@ -126,6 +131,8 @@ using (var process = new Process())
                 await context.SaveChangesAsync();
 
                 filesWrittenToDb++;
+
+                printStatusReport();
             }
 
             await context.SaveChangesAsync();
@@ -151,7 +158,7 @@ File.Delete(dbPath);
 
 Console.WriteLine("Done!");
 
-void printStatusReport()
+void printStatusReportInner()
 {
     ulong filesWrittenToTarLocal = Interlocked.Read(ref filesWrittenToTar);
     ulong bytesWrittenToTarLocal = Interlocked.Read(ref bytesWrittenToTar);
@@ -164,10 +171,22 @@ void printStatusReport()
         $"   Average files size: {Utilss.FormatNumberByteSize(lastSummary.BytesTotal / lastSummary.FilesTotal)}"
         );
 }
+void printStatusReport()
+{
+    if (Interlocked.CompareExchange(ref logLock, 1, 0) == 1) return;
+
+    printStatusReportInner();
+
+    Interlocked.Exchange(ref logLock, 0);
+}
 void printStatusReportU(MultiFileStatusReport summary)
 {
+    if (Interlocked.CompareExchange(ref logLock, 1, 0) == 1) return;
+
     lastSummary = summary;
-    printStatusReport();
+    printStatusReportInner();
+
+    Interlocked.Exchange(ref logLock, 0);
 }
 void printStatus(int basePos, string title, params string[] lines)
 {
