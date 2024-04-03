@@ -15,10 +15,10 @@ int ParallelTasks = Environment.ProcessorCount;
 int hashingBlockSize = 4 * 1024 * 1024;
 int compressionLevel = 9; // 0-9
 
-List<IImportable> imports = [
-    //new ImportFolder( @"H:\"),
-    new ImportFolder( @"D:\3D Projects"),
-];
+var importer = new Importer();
+
+// importer.ImportFileOrFolder(@"H:\");
+importer.ImportFileOrFolder(@"D:\3D Projects");
 
 // Get path to temp folder, and create sqlite database
 string tempPath = Path.GetTempPath();
@@ -83,8 +83,7 @@ using (var process = new Process())
         {
             context.Database.EnsureCreated();
 
-            Console.WriteLine("Gathering files...");
-            var importFiles = imports.Select(x => new PathTree(x.BasePath).AddMany(x.GetFiles())).ToArray();
+            PathTree[] importFiles = importer.Trees.ToArray();
 
             Console.WriteLine("Creating directory database entries...");
             List<FlattenedPathTreeLevel> levels = [];

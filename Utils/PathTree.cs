@@ -40,16 +40,6 @@ public sealed class PathTree
         return currentNode;
     }
 
-    public PathTree AddMany(IEnumerable<string> filePaths)
-    {
-        foreach (var filePath in filePaths)
-        {
-            GetOrAdd(filePath);
-        }
-
-        return this;
-    }
-
     public Task DbCreateDirectoriesAsync(OptoPackerContext dbCtx, CancellationToken cancellationToken = default)
     {
         return DbCreateDirectoriesAsync(dbCtx, [Root], 0, cancellationToken);
