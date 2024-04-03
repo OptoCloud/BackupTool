@@ -320,6 +320,8 @@ internal static class GitignoreParser
     }
     public static IEnumerable<string> GetTrackedFiles(string basePath, CancellationToken cancellationToken)
     {
+        if (!Directory.Exists(basePath)) return [];
+
         return Crawl(basePath, [], cancellationToken);
     }
 }
