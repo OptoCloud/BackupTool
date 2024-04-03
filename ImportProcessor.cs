@@ -35,7 +35,7 @@ internal static class ImportProcessor
         }
     }
 
-    public static async IAsyncEnumerable<ProcessedFileInfo> ProcessFilesAsync(string[] files, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize, int chunkingSize = 128, int parallelism = -1, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public static async IAsyncEnumerable<ProcessedFileInfo[]> ProcessFilesAsync(string[] files, MultiFileStatusReportFunc statusReportFunc, int hashingBlockSize, int chunkingSize = 128, int parallelism = -1, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Default to number of logical cores
         parallelism = parallelism == -1 ? Environment.ProcessorCount : parallelism;
@@ -67,17 +67,14 @@ internal static class ImportProcessor
             await Task.Delay(100, cancellationToken);
             if (outputChunksBag.TryTake(out ProcessedFileInfo[]? chunk))
             {
-                foreach (ProcessedFileInfo file in chunk)
-                {
-                    yield return file;
-                }
+                yield return chunk;
             }
         }
 
         // Ensure all tasks are completed
         await allTasks;
 
-        var aggregatedStatus = jobStatuses.Aggregate((a, b) => a + b);
+        MultiFileStatusReport aggregatedStatus = jobStatuses.Aggregate((a, b) => a + b);
 
         // Ensure all input chunks are processed
         foreach (string[] chunk in inputChunksBag.ToArray())
@@ -88,17 +85,14 @@ internal static class ImportProcessor
             }
             await foreach (ProcessedFileInfo file in FileUtils.HashAllAsync(chunk, subStatusReportFunc, hashingBlockSize, cancellationToken))
             {
-                yield return file;
+                yield return [file];
             }
         }
 
         // Ensure all output chunks are exported
-        while (outputChunksBag.TryTake(out ProcessedFileInfo[]? chunk))
+        while (outputChunksBag.TryTake(out ProcessedFileInfo[]? chunk) && chunk != null)
         {
-            foreach (ProcessedFileInfo file in chunk)
-            {
-                yield return file;
-            }
+            yield return chunk;
         }
     }
 }

@@ -35,16 +35,20 @@ ulong logLock = 0;
 
 int cursorPos = 0;
 uint filesWrittenToDb = 0;
-ulong filesWrittenToTar = 0;
-ulong bytesWrittenToTar = 0;
 List<int> prevLines = [];
 Dictionary<string, PathTreeFile> files = [];
 
 var lastSummary = new MultiFileStatusReport();
 
-// Start the 7-Zip process
-using (var process = new Process())
+bool tarWriterRunning = true;
+ulong tarWrittenFiles = 0;
+ulong tarWrittenBytes = 0;
+var tarWriterBag = new ConcurrentBag<TarFileEntry>();
+var tarWriterTask = Task.Run(async () =>
 {
+    // Start the 7-Zip process
+    using var process = new Process();
+
     process.StartInfo.FileName = "7z"; // Path to 7z executable
     process.StartInfo.Arguments = $"a -t7z \"{archivePath}\" -si\"data.tar\" -mx={compressionLevel} -m0=lzma2 -aoa";
     process.StartInfo.RedirectStandardInput = true;
@@ -54,132 +58,144 @@ using (var process = new Process())
 
     using (var tarWriter = new TarWriter(process.StandardInput.BaseStream))
     {
-        // Delete old database if it exists
-        if (File.Exists(dbPath))
+        while (tarWriterRunning)
         {
-            File.Delete(dbPath);
-        }
-        // Create new database
-        var options = new DbContextOptionsBuilder<OptoPackerContext>()
-            .UseSqlite($"Data Source={dbPath}")
-            .Options;
-
-        bool importingFiles = true;
-        var tarWriterQueue = new ConcurrentQueue<(string, byte[], ulong)>();
-        var tarWritingTask = Task.Run(async () =>
-        {
-            while (importingFiles)
+            while (tarWriterBag.TryTake(out TarFileEntry entry))
             {
-                while (tarWriterQueue.TryDequeue(out (string path, byte[] hash, ulong size) entry))
-                {
-                    if (entry.size == 0) continue;
+                if (entry.Size == 0) continue;
 
-                    string hash = Utilss.BytesToHex(entry.hash);
-                    await tarWriter.WriteEntryAsync(entry.path, $"files/{hash[..2]}/{hash}");
-                    Interlocked.Increment(ref filesWrittenToTar);
-                    Interlocked.Add(ref bytesWrittenToTar, entry.size);
+                await tarWriter.WriteEntryAsync(entry.ExternalPath, entry.InternalPath);
 
-                    printStatusReport();
-                }
-
-                await Task.Delay(100);
-            }
-        });
-
-        using (var context = new OptoPackerContext(options))
-        {
-            context.Database.EnsureCreated();
-
-            PathTree[] importFiles = importer.Trees.ToArray();
-
-            Console.WriteLine("Creating directory database entries...");
-            List<FlattenedPathTreeLevel> levels = [];
-            foreach (var importFile in importFiles)
-            {
-                await importFile.DbCreateDirectoriesAsync(context);
-            }
-
-            Dictionary<string, ulong> blobIdCache = [];
-
-            Console.WriteLine("Hashing files... (This might take a couple minutes)");
-            cursorPos = Console.CursorTop;
-            files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
-            await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync([.. files.Keys], printStatusReportU, hashingBlockSize, ChunkSize, ParallelTasks))
-            {
-                if (file.Size > 0) {
-                    tarWriterQueue.Enqueue((file.Path, file.Hash, file.Size));
-                }
-
-                string strHash = Convert.ToBase64String(file.Hash);
-                if (!blobIdCache.TryGetValue(strHash, out ulong blobId))
-                {
-                    BlobEntity? blob;
-                    try
-                    {
-                        blob = new BlobEntity()
-                        {
-                            Hash = file.Hash,
-                            Size = file.Size,
-                        };
-                        await context.Blobs.AddAsync(blob);
-                        await context.SaveChangesAsync();
-                    }
-                    catch (Exception)
-                    {
-                        blob = await context.Blobs.FirstOrDefaultAsync(blob => blob.Hash == file.Hash);
-                    }
-
-                    if (blob == null) throw new Exception("Blob could not be created or found");
-
-                    blobId = blob.Id;
-                    blobIdCache[strHash] = blobId;
-                }
-
-                var pathTreefile = files[file.Path];
-                string name = pathTreefile.Name;
-                int extPos = name.LastIndexOf('.');
-
-                await context.Files.AddAsync(new FileEntity
-                {
-                    BlobId = blobId,
-                    DirectoryId = pathTreefile.DirectoryId!.Value,
-                    Name = extPos > 0 ? name[..extPos] : name,
-                    Extension = extPos > 0 ? name[(extPos + 1)..] : string.Empty,
-                });
-                await context.SaveChangesAsync();
-
-                filesWrittenToDb++;
-
+                // Status reporting
+                Interlocked.Increment(ref tarWrittenFiles);
+                Interlocked.Add(ref tarWrittenBytes, entry.Size);
                 printStatusReport();
             }
 
-            await context.SaveChangesAsync();
-            await context.Database.CloseConnectionAsync();
+            await Task.Delay(100);
         }
-        // Stupid fix
-        SqliteConnection.ClearAllPools();
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
 
-        importingFiles = false;
-
-        await tarWritingTask;
-
-        // Add the database to the archive
-        tarWriter.WriteEntry(dbPath, "index.db");
+        await tarWriter.WriteEntryAsync(dbPath, "index.db");
     }
 
     _ = process.StandardOutput.ReadToEnd();
     process.WaitForExit();
+});
+
+// Create new database
+var options = new DbContextOptionsBuilder<OptoPackerContext>()
+    .UseSqlite($"Data Source={dbPath}")
+    .Options;
+
+using (var context = new OptoPackerContext(options))
+{
+    context.Database.EnsureCreated();
+
+    PathTree[] importFiles = importer.Trees.ToArray();
+
+    Console.WriteLine("Creating directory database entries...");
+    List<FlattenedPathTreeLevel> levels = [];
+    foreach (var importFile in importFiles)
+    {
+        await importFile.DbCreateDirectoriesAsync(context);
+    }
+
+    Dictionary<string, BlobEntity> blobEntityCache = [];
+
+    Console.WriteLine("Hashing files... (This might take a couple minutes)");
+    cursorPos = Console.CursorTop;
+    files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
+    await foreach (ProcessedFileInfo[] fileChunk in ImportProcessor.ProcessFilesAsync([.. files.Keys], printStatusReportU, hashingBlockSize, ChunkSize, ParallelTasks))
+    {
+        List<(ProcessedFileInfo, string, BlobEntity, bool)> fileBlobs = [];
+
+        // Insert all blobs we can
+        foreach (ProcessedFileInfo file in fileChunk)
+        {
+            bool inserted = false;
+
+            string hash = Utilss.BytesToHex(file.Hash);
+
+            if (!blobEntityCache.TryGetValue(hash, out BlobEntity? blob))
+            {
+                try
+                {
+                    blob = new BlobEntity()
+                    {
+                        Hash = file.Hash,
+                        Size = file.Size,
+                    };
+
+                    context.Blobs.Add(blob);
+
+                    inserted = true;
+                }
+                catch (Exception)
+                {
+                    blob = await context.Blobs.FirstOrDefaultAsync(blob => blob.Hash == file.Hash);
+                }
+
+                if (blob is null)
+                {
+                    Console.WriteLine($"{hash} could not be created or found!");
+                    continue;
+                }
+
+                blobEntityCache.Add(hash, blob);
+            }
+
+            fileBlobs.Add((file, hash, blob, inserted));
+        }
+
+        // Save changes
+        await context.SaveChangesAsync();
+
+        foreach (var (file, hash, blob, inserted) in fileBlobs)
+        {
+            var pathTreefile = files[file.Path];
+            var (name, ext) = SplitFileName(pathTreefile.Name);
+
+            context.Files.Add(new FileEntity
+            {
+                BlobId = blob.Id,
+                DirectoryId = pathTreefile.DirectoryId!.Value,
+                Name = name,
+                Extension = ext,
+            });
+
+            filesWrittenToDb++;
+
+            if (file.Size > 0 && inserted)
+            {
+                tarWriterBag.Add(new TarFileEntry(file.Path, $"files/{hash[..2]}/{hash}", file.Size));
+            }
+        }
+
+        await context.SaveChangesAsync();
+
+        printStatusReport();
+    }
+
+    await context.SaveChangesAsync();
+    await context.Database.CloseConnectionAsync();
 }
+// Stupid fix
+SqliteConnection.ClearAllPools();
+GC.Collect();
+GC.WaitForPendingFinalizers();
+
+tarWriterRunning = false;
+
+await tarWriterTask;
+
 File.Delete(dbPath);
 
 Console.WriteLine("Done!");
 
 void printStatusReportInner()
 {
-    ulong filesWrittenToTarLocal = Interlocked.Read(ref filesWrittenToTar);
-    ulong bytesWrittenToTarLocal = Interlocked.Read(ref bytesWrittenToTar);
+    ulong filesWrittenToTarLocal = Interlocked.Read(ref tarWrittenFiles);
+    ulong bytesWrittenToTarLocal = Interlocked.Read(ref tarWrittenBytes);
 
     string bytesTotalFormatted = Utilss.FormatNumberByteSize(lastSummary.BytesTotal);
     printStatus(cursorPos, "Status:",
@@ -229,6 +245,16 @@ void printStatus(int basePos, string title, params string[] lines)
 
     Console.Write(sb.ToString());
 }
+(string name, string extension) SplitFileName(string fileName)
+{
+    int idx = fileName.LastIndexOf('.');
+
+    if (idx <= 0) return (fileName, String.Empty);
+
+    return (fileName[..idx], fileName[(idx + 1)..]);
+}
+
+record struct TarFileEntry(string ExternalPath, string InternalPath, ulong Size);
 
 sealed record FlattenedPathTreeLevel(List<FlattenedPathTreeChunk> Chunks);
 sealed record FlattenedPathTreeChunk(ulong? ParentId, string? ParentName, string[] ChildrenNames);

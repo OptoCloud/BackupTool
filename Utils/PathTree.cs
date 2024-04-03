@@ -52,7 +52,7 @@ public sealed class PathTree
         foreach (var node in nodes)
         {
             nextNodes.AddRange(node.Children);
-            await dbCtx.Directories.AddAsync(new DirectoryEntity { Name = node.Name, ParentId = node.ParentId }, cancellationToken);
+            dbCtx.Directories.Add(new DirectoryEntity { Name = node.Name, ParentId = node.ParentId });
         }
 
         await dbCtx.SaveChangesAsync(cancellationToken);
