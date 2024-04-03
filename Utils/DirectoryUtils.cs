@@ -21,8 +21,9 @@ internal static class DirectoryUtils
         }
 
         if (searchOption == SearchOption.TopDirectoryOnly)
+        {
             yield break;
-
+        }
 
         string[] directories;
         try
@@ -31,7 +32,7 @@ internal static class DirectoryUtils
         }
         catch (Exception)
         {
-            directories = [];
+            yield break;
         }
 
         foreach (string directory in directories)
