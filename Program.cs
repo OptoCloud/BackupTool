@@ -99,6 +99,8 @@ using (var process = new Process())
                 await importFile.DbCreateDirectoriesAsync(context);
             }
 
+            Dictionary<string, ulong> blobIdCache = [];
+
             Console.WriteLine("Hashing files... (This might take a couple minutes)");
             cursorPos = Console.CursorTop;
             files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
@@ -108,16 +110,29 @@ using (var process = new Process())
                     tarWriterQueue.Enqueue((file.Path, file.Hash, file.Size));
                 }
 
-                var blob = await context.Blobs.FirstOrDefaultAsync(blob => blob.Hash == file.Hash);
-                if (blob == null)
+                string strHash = Convert.ToBase64String(file.Hash);
+                if (!blobIdCache.TryGetValue(strHash, out ulong blobId))
                 {
-                    blob = new BlobEntity()
+                    BlobEntity? blob;
+                    try
                     {
-                        Hash = file.Hash,
-                        Size = file.Size,
-                    };
-                    await context.Blobs.AddAsync(blob);
-                    await context.SaveChangesAsync();
+                        blob = new BlobEntity()
+                        {
+                            Hash = file.Hash,
+                            Size = file.Size,
+                        };
+                        await context.Blobs.AddAsync(blob);
+                        await context.SaveChangesAsync();
+                    }
+                    catch (Exception)
+                    {
+                        blob = await context.Blobs.FirstOrDefaultAsync(blob => blob.Hash == file.Hash);
+                    }
+
+                    if (blob == null) throw new Exception("Blob could not be created or found");
+
+                    blobId = blob.Id;
+                    blobIdCache[strHash] = blobId;
                 }
 
                 var pathTreefile = files[file.Path];
@@ -126,11 +141,10 @@ using (var process = new Process())
 
                 await context.Files.AddAsync(new FileEntity
                 {
-                    BlobId = blob.Id,
+                    BlobId = blobId,
                     DirectoryId = pathTreefile.DirectoryId!.Value,
                     Name = extPos > 0 ? name[..extPos] : name,
                     Extension = extPos > 0 ? name[(extPos + 1)..] : string.Empty,
-                    Blob = blob,
                 });
                 await context.SaveChangesAsync();
 
