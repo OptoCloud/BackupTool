@@ -72,6 +72,8 @@ using (var process = new Process())
             {
                 while (tarWriterQueue.TryDequeue(out (string path, byte[] hash, ulong size) entry))
                 {
+                    if (entry.size == 0) continue;
+
                     string hash = Utilss.BytesToHex(entry.hash);
                     await tarWriter.WriteEntryAsync(entry.path, $"files/{hash[..2]}/{hash}");
                     Interlocked.Increment(ref filesWrittenToTar);
@@ -102,7 +104,9 @@ using (var process = new Process())
             files = importFiles.SelectMany(x => x.GetAllFiles()).ToDictionary(x => x.OriginalPath);
             await foreach (ProcessedFileInfo file in ImportProcessor.ProcessFilesAsync([.. files.Keys], printStatusReportU, hashingBlockSize, ChunkSize, ParallelTasks))
             {
-                tarWriterQueue.Enqueue((file.Path, file.Hash, file.Size));
+                if (file.Size > 0) {
+                    tarWriterQueue.Enqueue((file.Path, file.Hash, file.Size));
+                }
 
                 var blob = await context.Blobs.FirstOrDefaultAsync(blob => blob.Hash == file.Hash);
                 if (blob == null)
