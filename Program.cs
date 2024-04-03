@@ -15,15 +15,15 @@ int ParallelTasks = Environment.ProcessorCount;
 int hashingBlockSize = 4 * 1024 * 1024;
 int compressionLevel = 9; // 0-9
 
+// Get path to temp folder, and create sqlite database
+string tempPath = Path.Combine(Path.GetTempPath(), "OptoPacker", Guid.NewGuid().ToString());
+string dbPath = Path.Combine(tempPath, "index.db");
+string archivePath = "D:\\archive.7z";
+
 var importer = new Importer();
 
 // importer.ImportFileOrFolder(@"H:\");
 importer.ImportFileOrFolder(@"D:\3D Projects");
-
-// Get path to temp folder, and create sqlite database
-string tempPath = Path.GetTempPath();
-string dbPath = Path.Combine(tempPath, "OptoPacker.db");
-string archivePath = "D:\\archive.7z";
 
 int cursorPos = 0;
 uint filesWrittenToDb = 0;
