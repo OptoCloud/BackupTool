@@ -40,9 +40,10 @@ Dictionary<string, PathTreeFile> files = [];
 
 var lastSummary = new MultiFileStatusReport();
 
-bool tarWriterRunning = true;
-ulong tarWrittenFiles = 0;
-ulong tarWrittenBytes = 0;
+ulong _tarTotalFiles = 0;
+ulong _tarTotalBytes = 0;
+ulong _tarWrittenFiles = 0;
+ulong _tarWrittenBytes = 0;
 var tarWriterBag = new ConcurrentBag<TarFileEntry>();
 var tarWriterTask = Task.Run(async () =>
 {
@@ -58,7 +59,9 @@ var tarWriterTask = Task.Run(async () =>
 
     using (var tarWriter = new TarWriter(process.StandardInput.BaseStream))
     {
-        while (tarWriterRunning)
+        bool run = true;
+
+        while (run)
         {
             while (tarWriterBag.TryTake(out TarFileEntry entry))
             {
@@ -67,15 +70,18 @@ var tarWriterTask = Task.Run(async () =>
                 await tarWriter.WriteEntryAsync(entry.ExternalPath, entry.InternalPath);
 
                 // Status reporting
-                Interlocked.Increment(ref tarWrittenFiles);
-                Interlocked.Add(ref tarWrittenBytes, entry.Size);
+                Interlocked.Increment(ref _tarWrittenFiles);
+                Interlocked.Add(ref _tarWrittenBytes, entry.Size);
                 printStatusReport();
+
+                if (entry.ExitAfterWrite)
+                {
+                    run = false;
+                }
             }
 
             await Task.Delay(100);
         }
-
-        await tarWriter.WriteEntryAsync(dbPath, "index.db");
     }
 
     _ = process.StandardOutput.ReadToEnd();
@@ -168,6 +174,8 @@ using (var context = new OptoPackerContext(options))
             if (file.Size > 0 && inserted)
             {
                 tarWriterBag.Add(new TarFileEntry(file.Path, $"files/{hash[..2]}/{hash}", file.Size));
+                Interlocked.Increment(ref _tarTotalFiles);
+                Interlocked.Add(ref _tarTotalBytes, file.Size);
             }
         }
 
@@ -184,7 +192,12 @@ SqliteConnection.ClearAllPools();
 GC.Collect();
 GC.WaitForPendingFinalizers();
 
-tarWriterRunning = false;
+var dbSize = new FileInfo(dbPath).Length;
+if (dbSize <= 0) throw new Exception("Wtf?");
+
+tarWriterBag.Add(new TarFileEntry(dbPath, "index.db", (ulong)dbSize, true));
+Interlocked.Increment(ref _tarTotalFiles);
+Interlocked.Add(ref _tarTotalBytes, (ulong)dbSize);
 
 await tarWriterTask;
 
@@ -194,15 +207,22 @@ Console.WriteLine("Done!");
 
 void printStatusReportInner()
 {
-    ulong filesWrittenToTarLocal = Interlocked.Read(ref tarWrittenFiles);
-    ulong bytesWrittenToTarLocal = Interlocked.Read(ref tarWrittenBytes);
+    ulong tarTotalFiles = Interlocked.Read(ref _tarTotalFiles);
+    ulong tarTotalBytes = Interlocked.Read(ref _tarTotalBytes);
+    ulong tarWrittenFiles = Interlocked.Read(ref _tarWrittenFiles);
+    ulong tarWrittenBytes = Interlocked.Read(ref _tarWrittenBytes);
 
+    string tarTotalBytesFormatted = Utilss.FormatNumberByteSize(tarTotalBytes);
+    string tarWrittenBytesFormatted = Utilss.FormatNumberByteSize(tarWrittenBytes);
     string bytesTotalFormatted = Utilss.FormatNumberByteSize(lastSummary.BytesTotal);
+    string bytesHashedFormatted = Utilss.FormatNumberByteSize(lastSummary.BytesProcessed);
+    string averageFileSizeFormatted = Utilss.FormatNumberByteSize(lastSummary.BytesTotal / lastSummary.FilesTotal);
+
     printStatus(cursorPos, "Status:",
-        $"   {lastSummary.FilesProcessed} / {files.Count} files hashed ({Utilss.FormatNumberByteSize(lastSummary.BytesProcessed)} / {bytesTotalFormatted})",
+        $"   {lastSummary.FilesProcessed} / {files.Count} files hashed ({bytesHashedFormatted} / {bytesTotalFormatted})",
         $"   {filesWrittenToDb} / {files.Count} files written to DB",
-        $"   {filesWrittenToTarLocal} / {files.Count} files written to Tar ({Utilss.FormatNumberByteSize(bytesWrittenToTarLocal)} / {bytesTotalFormatted})",
-        $"   Average files size: {Utilss.FormatNumberByteSize(lastSummary.BytesTotal / lastSummary.FilesTotal)}"
+        $"   {tarWrittenFiles} / {tarTotalFiles} blobs written to Tar ({tarWrittenBytesFormatted} / {tarTotalBytesFormatted})",
+        $"   Average file size: {averageFileSizeFormatted}"
         );
 }
 void printStatusReport()
@@ -254,7 +274,7 @@ void printStatus(int basePos, string title, params string[] lines)
     return (fileName[..idx], fileName[(idx + 1)..]);
 }
 
-record struct TarFileEntry(string ExternalPath, string InternalPath, ulong Size);
+record struct TarFileEntry(string ExternalPath, string InternalPath, ulong Size, bool ExitAfterWrite = false);
 
 sealed record FlattenedPathTreeLevel(List<FlattenedPathTreeChunk> Chunks);
 sealed record FlattenedPathTreeChunk(ulong? ParentId, string? ParentName, string[] ChildrenNames);
