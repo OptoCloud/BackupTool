@@ -104,7 +104,7 @@ using (var process = new Process())
             {
                 tarWriterQueue.Enqueue((file.Path, file.Hash, file.Size));
 
-                var blob = await context.Blobs.FirstOrDefaultAsync();
+                var blob = await context.Blobs.FirstOrDefaultAsync(blob => blob.Hash == file.Hash);
                 if (blob == null)
                 {
                     blob = new BlobEntity()
