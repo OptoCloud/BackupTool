@@ -40,6 +40,6 @@ internal static class PathUtils
 
     public static string[] GetPathParts(string path)
     {
-        return path.Split(PathSeperators, StringSplitOptions.RemoveEmptyEntries);
+        return path.Split(PathSeperators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 }

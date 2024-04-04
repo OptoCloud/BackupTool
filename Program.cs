@@ -6,9 +6,7 @@ using BackupTool.Utils;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
-using System.Reflection.Metadata;
 using System.Text;
-using static System.Reflection.Metadata.BlobBuilder;
 
 const int ChunkSize = 128;
 const int hashingBlockSize = 4 * 1024 * 1024;
@@ -41,7 +39,7 @@ var importer = new Importer();
 importer.ImportFileOrFolder(@"D:\3D Projects");
 
 var archiveWriter = new ArchiveWriter(@"D:\archive.7z", ArchiveWriter.CompressionLevel.Ultra);
-if (!archiveWriter.Start())
+if (!await archiveWriter.Start())
 {
     Console.WriteLine("Failed to start ArchiveWriter!");
     return;
@@ -62,7 +60,8 @@ using (var context = new BTContext(options))
 
     ulong directoryIdCounter = 0;
     Console.WriteLine("Creating directory database entries...");
-    context.Directories.AddRange(importRoots.SelectMany(r => r.AllDirectoriesDFS).Select(d => {
+    context.Directories.AddRange(importRoots.SelectMany(r => r.AllDirectoriesDFS).Select(d =>
+    {
         d.Entity = new DirectoryEntity
         {
             Id = ++directoryIdCounter,
@@ -92,7 +91,8 @@ using (var context = new BTContext(options))
     cursorPos = Console.CursorTop;
     foreach (var files in importFiles.GroupBy(f => f.Mime))
     {
-        foreach (var file in files) {
+        foreach (var file in files)
+        {
             byte[] hash;
 
             using (var fs = File.OpenRead(file.FullPathStr))

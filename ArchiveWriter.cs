@@ -1,5 +1,5 @@
-﻿using System.Collections.Concurrent;
-using System.Diagnostics;
+﻿using BackupTool.Utils;
+using System.Collections.Concurrent;
 using System.Formats.Tar;
 
 namespace BackupTool;
@@ -46,14 +46,12 @@ internal sealed class ArchiveWriter
 
     private async Task WriterTask()
     {
-        using var process = new Process();
+        if (File.Exists(_archivePath))
+        {
+            File.Delete(_archivePath);
+        }
 
-        process.StartInfo.FileName = "7z"; // Path to 7z executable
-        process.StartInfo.Arguments = $"a -t7z \"{_archivePath}\" -si\"data.tar\" -mx={(int)_compressionLevel} -m0=lzma2 -aoa";
-        process.StartInfo.RedirectStandardInput = true;
-        process.StartInfo.RedirectStandardOutput = true;
-        process.StartInfo.UseShellExecute = false;
-        process.Start();
+        using var process = ProcessUtils.StartProcess("7z", $"a -t7z \"{_archivePath}\" -si\"data.tar\" -mx={(int)_compressionLevel} -m0=lzma2 -aoa");
 
         using (var tarWriter = new TarWriter(process.StandardInput.BaseStream))
         {
@@ -73,13 +71,56 @@ internal sealed class ArchiveWriter
             }
         }
 
-        _ = process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
+        Console.WriteLine(await process.StandardOutput.ReadToEndAsync());
+        await process.WaitForExitAsync();
     }
 
-    public bool Start()
+    private async Task<string?> Get7zVersion()
+    {
+        using var p7z = ProcessUtils.StartProcessOrNull("7z");
+        if (p7z == null) return null;
+
+        await p7z.WaitForExitAsync();
+
+        while (true)
+        {
+            string? line = await p7z.StandardOutput.ReadLineAsync();
+            if (line == null) break;
+
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length == 0) continue;
+
+            if (parts[0] == "7-Zip" && parts.Contains("Copyright"))
+            {
+                if (parts.Length >= 2)
+                {
+                    return parts[1];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    public async Task<bool> Start()
     {
         if (_run || _task != null) return false;
+
+        string? version = await Get7zVersion();
+        if (version == null)
+        {
+            await File.WriteAllBytesAsync("7z.exe", Properties.Resources._7z_EXE);
+            await File.WriteAllBytesAsync("7z.dll", Properties.Resources._7z_DLL);
+            version = await Get7zVersion();
+        }
+
+        if (version == null)
+        {
+            Console.WriteLine("Unable to launch 7-Zip!");
+            return false;
+        }
+
+        Console.WriteLine($"Starting 7-Zip {version}");
 
         _run = true;
         _task = Task.Run(WriterTask);

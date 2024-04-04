@@ -178,14 +178,16 @@ internal static class GitignoreParser
         }
     }
 
-    static IEnumerable<GitRegex> ParseGitignore(string gitignorePath)
+    static IEnumerable<GitRegex> ParseGitignore(Stream stream, string path)
     {
-        // Read file
-        var lines = File.ReadAllLines(gitignorePath);
+        using var streamReader = new StreamReader(stream, leaveOpen: true);
 
         // Convert ignore patterns to regex
-        foreach (var line in lines)
+        while (true)
         {
+            string? line = streamReader.ReadLine();
+            if (line == null) break;
+
             ReadOnlySpan<char> str = line.AsSpan();
 
             if (str.IsEmpty || str[0] == '#') continue;
@@ -200,7 +202,7 @@ internal static class GitignoreParser
             if (regex == null) continue;
 
             yield return GitRegex.Create(
-                Path.GetDirectoryName(gitignorePath)!,
+                Path.GetDirectoryName(path)!,
                 regex,
                 str.Contains('/'),
                 isDirectory,
@@ -209,8 +211,18 @@ internal static class GitignoreParser
         }
     }
 
+    static IEnumerable<GitRegex> ParseGitignore(byte[] data, string path)
+    {
+        using var stream = new MemoryStream(data);
+        return ParseGitignore(stream, path);
+    }
 
-    static readonly GitRegex[] UnityProjectIgnorePattern = ParseGitignore("Unity.gitignore").ToArray();
+    static IEnumerable<GitRegex> ParseGitignore(string path)
+    {
+        using var fileStream = File.OpenRead(path);
+        return ParseGitignore(fileStream, path);
+    }
+
     public static GitRegex[] GetUnityProjectIgnores(string projectDir)
     {
         try
@@ -218,7 +230,7 @@ internal static class GitignoreParser
             var projectVersionFilePath = Path.Combine(projectDir, "ProjectSettings", "ProjectVersion.txt");
             if (File.ReadLines(projectVersionFilePath).Any(l => l.StartsWith("m_EditorVersion:")))
             {
-                return UnityProjectIgnorePattern;
+                return ParseGitignore(Properties.Resources.GitIgnore_Unity, projectDir).ToArray();
             }
         }
         catch (Exception)
