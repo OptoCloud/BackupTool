@@ -1,7 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace OptoPacker.Database.Models;
+namespace BackupTool.Database.Models;
 
 public sealed class DirectoryEntity
 {
@@ -38,7 +38,7 @@ public sealed class DirectoryEntityConfiguration : IEntityTypeConfiguration<Dire
         builder.HasOne(x => x.Parent)
             .WithMany(x => x.Children)
             .HasForeignKey(x => x.ParentId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(x => new { x.ParentId, x.Name })
             .IsUnique();

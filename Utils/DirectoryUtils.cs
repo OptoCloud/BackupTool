@@ -1,4 +1,4 @@
-﻿namespace OptoPacker.Utils;
+﻿namespace BackupTool.Utils;
 
 internal static class DirectoryUtils
 {

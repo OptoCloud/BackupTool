@@ -1,7 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace OptoPacker.Database.Models;
+namespace BackupTool.Database.Models;
 
 public sealed class BlobEntity
 {

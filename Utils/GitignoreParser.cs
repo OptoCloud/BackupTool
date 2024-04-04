@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace OptoPacker.Utils;
+namespace BackupTool.Utils;
 
 internal static class GitignoreParser
 {

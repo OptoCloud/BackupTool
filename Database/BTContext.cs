@@ -1,11 +1,11 @@
-﻿using Microsoft.EntityFrameworkCore;
-using OptoPacker.Database.Models;
+﻿using BackupTool.Database.Models;
+using Microsoft.EntityFrameworkCore;
 
-namespace OptoPacker.Database;
+namespace BackupTool.Database;
 
-public sealed class OptoPackerContext : DbContext
+public sealed class BTContext : DbContext
 {
-    public OptoPackerContext(DbContextOptions<OptoPackerContext> options) : base(options)
+    public BTContext(DbContextOptions<DbContext> options) : base(options)
     {
     }
 

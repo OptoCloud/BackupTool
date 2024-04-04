@@ -1,161 +1,101 @@
-﻿namespace OptoPacker.Utils.Utils;
+﻿using MimeDetective;
+using MimeMapping;
+using System.Collections.ObjectModel;
+
+namespace BackupTool.Utils;
 
 internal static class FileAnalyzer
 {
-    private const int AnalyzeSize = 512;
-    private const int AnalysisCacheConclusiveSize = 128;
-    private const int AnalysisCacheDifferenceFactor = 20;
+    public const string UnkownMimeType = "application/octet-stream";
 
-    private record struct FileAnalysisResult(int AsciiCount, int UnicodeCount, int UnknownCount);
-    private static readonly FileAnalysisResult DefaultAnalysisResult = new(0, 0, 0);
-    private static readonly Dictionary<string, FileAnalysisResult> FileAnalysisCache = [];
-
-    private static FileAnalysisResult GetAnalysisResult(string ext)
+    private static ReadOnlyDictionary<string, string> GetTypeMap()
     {
-        if (!string.IsNullOrEmpty(ext) && FileAnalysisCache.TryGetValue(ext, out var result))
-            return result;
+        Dictionary<string, string> dict = MimeUtility.TypeMap.ToDictionary();
 
-        return DefaultAnalysisResult;
+        // Programming languages
+        dict.TryAdd("cs", "text/plain");
+        dict.TryAdd("py", "text/plain");
+        dict.TryAdd("go", "text/plain");
+        dict.TryAdd("license", "text/plain");
+        dict.TryAdd("keep", "text/plain");
+        dict.TryAdd("gitkeep", "text/plain");
+        dict.TryAdd("gitignore", "text/plain");
+        dict.TryAdd("collabignore", "text/plain");
+        dict.TryAdd("vsconfig", "text/plain");
+
+        // Unity
+        dict.TryAdd("mat", "text/xml");
+        dict.TryAdd("meta", "text/yaml");
+        dict.TryAdd("uxml", "text/yaml");
+        dict.TryAdd("unity", "text/yaml");
+        dict.TryAdd("asset", "text/yaml");
+        dict.TryAdd("anim", "text/yaml");
+        dict.TryAdd("prefab", "text/yaml");
+        dict.TryAdd("controller", "text/yaml");
+        dict.TryAdd("asmdef", "application/json");
+        dict.TryAdd("hlsl", "text/plain+shader-hlsl");
+        dict.TryAdd("shader", "text/plain+shader-hlsl");
+        dict.TryAdd("unitypackage", "application/x-tar+gz");
+        dict.TryAdd("rsp", "text/plain");
+
+        // LilToon stuff
+        dict.TryAdd("fx", "text/plain+shader-hlsl");
+        dict.TryAdd("lilblock", "text/plain+shader-hlsl");
+        dict.TryAdd("lilinternal", "text/plain+shader-hlsl");
+
+        // Poiyomi stuff
+        dict.TryAdd("poi", "text/plain");
+        dict.TryAdd("poitemplate", "text/plain+shader-hlsl");
+        dict.TryAdd("poitemplatecollection", "text/plain+shader-hlsl");
+
+        return dict.AsReadOnly();
+    }
+    private static readonly ReadOnlyDictionary<string, string> TypeMap = GetTypeMap();
+
+    private static IList<MimeDetective.Storage.Definition> ExhaustiveDefinitions => new MimeDetective.Definitions.ExhaustiveBuilder() { UsageType = MimeDetective.Definitions.Licensing.UsageType.PersonalNonCommercial }.Build();
+    private static readonly ContentInspector Inspector = new ContentInspectorBuilder() { Definitions = ExhaustiveDefinitions, Parallel = true }.Build() ?? throw new ApplicationException("Failed to build file inspector");
+
+    public static string? GuessMimeByExtension(string path)
+    {
+        string ext = PathUtils.GetExtension(path).ToLowerInvariant();
+        if (ext.Length <= 0)
+            return null;
+
+        if (!TypeMap.TryGetValue(ext, out string? mime)) // DEBUG: Is filename prefixed by '.'?
+            return null;
+
+        return mime;
     }
 
-    public enum AnalysisSummary
+    public static string? GuessMimeByContents(Stream stream)
     {
-        ASCII,
-        Unicode,
-        Binary,
-        Unconclusive
+        return Inspector
+            .Inspect(stream)
+            .Where(m => m.Type == MimeDetective.Engine.DefinitionMatchType.Complete)
+            .FirstOrDefault()?
+            .Definition
+            .File
+            .MimeType;
     }
-    private static AnalysisSummary GetAnalysisSummary(FileAnalysisResult result)
+
+    public static string GuessMime(string path)
     {
-        if (result.AsciiCount + result.UnicodeCount + result.UnknownCount >= AnalysisCacheConclusiveSize)
+        string? mime = GuessMimeByExtension(path);
+        if (mime != null) return mime;
+
+        string filename = Path.GetFileName(path);
+
+        switch (filename)
         {
-            if (result.AsciiCount > (result.UnknownCount + result.UnicodeCount) * AnalysisCacheDifferenceFactor) return AnalysisSummary.ASCII;
-            if (result.UnknownCount > (result.AsciiCount + result.UnicodeCount) * AnalysisCacheDifferenceFactor) return AnalysisSummary.Binary;
-            if (result.UnicodeCount > (result.AsciiCount + result.UnknownCount) * AnalysisCacheDifferenceFactor) return AnalysisSummary.Unicode;
+            case "README":
+            case "LICENSE":
+                return "text/plain";
+            default:
+                break;
         }
 
-        return AnalysisSummary.Unconclusive;
-    }
+        using var fs = File.OpenRead(path);
 
-    private static bool TryGetAnalysisResultAndSummary(string ext, out FileAnalysisResult result, out AnalysisSummary summary)
-    {
-        result = GetAnalysisResult(ext);
-        summary = GetAnalysisSummary(result);
-        return summary != AnalysisSummary.Unconclusive;
-    }
-    private static void SetAnalysisResult(string ext, FileAnalysisResult prevResult, TextEncoding encoding)
-    {
-        if (!string.IsNullOrEmpty(ext))
-        {
-            FileAnalysisCache[ext] = encoding switch
-            {
-                TextEncoding.ASCII => prevResult with { AsciiCount = prevResult.AsciiCount + 1 },
-                TextEncoding.Unknown => prevResult with { UnknownCount = prevResult.UnknownCount + 1 },
-                _ => prevResult with { UnicodeCount = prevResult.UnicodeCount + 1 }
-            };
-        }
-    }
-
-    public enum TextEncoding
-    {
-        ASCII,
-        UTF1,
-        UTF7,
-        UTF8,
-        UTF16_LE,
-        UTF16_BE,
-        UTF32_LE,
-        UTF32_BE,
-        UTF_EBCDIC,
-        UTF_SCSU,
-        UTF_BOCU1,
-        UTF_GB_18030,
-        Unknown
-    }
-    public static TextEncoding GetTextEncoding(string fileExtension, ReadOnlySpan<byte> bytes)
-    {
-        TextEncoding encoding;
-
-        if (bytes.Length >= 4)
-        {
-            encoding = bytes[..4] switch
-            {
-                [0xFE, 0xFF, _, _] => TextEncoding.UTF16_BE,
-                [0x0E, 0xFE, 0xFF, _] => TextEncoding.UTF_SCSU,
-                [0x2B, 0x2F, 0x76, _] => TextEncoding.UTF7,
-                [0xEF, 0xBB, 0xBF, _] => TextEncoding.UTF8,
-                [0xF7, 0x64, 0x4C, _] => TextEncoding.UTF1,
-                [0xFB, 0xEE, 0x28, _] => TextEncoding.UTF_BOCU1,
-                [0xFF, 0xFE, 0x00, 0x00] => TextEncoding.UTF32_LE,
-                [0x00, 0x00, 0xFE, 0xFF] => TextEncoding.UTF32_BE,
-                [0xDD, 0x73, 0x66, 0x73] => TextEncoding.UTF_EBCDIC,
-                [0x84, 0x31, 0x95, 0x33] => TextEncoding.UTF_GB_18030,
-                [0xFF, 0xFE, _, _] => TextEncoding.UTF16_LE,
-                _ => TextEncoding.Unknown
-            };
-        }
-        else
-        {
-            encoding = TextEncoding.Unknown;
-        }
-
-        if (encoding == TextEncoding.Unknown)
-        {
-            encoding = TextEncoding.ASCII;
-            foreach (byte b in bytes)
-            {
-                if (b is < 0x20 and not (0x09 or 0x0A or 0x0D) or > 0x7E)
-                {
-                    encoding = TextEncoding.Unknown;
-                    break;
-                }
-            }
-        }
-
-        return encoding;
-    }
-
-    public enum ContentType
-    {
-        ASCII,
-        Unicode,
-        Binary
-    }
-    public record struct FileAnalysis(string Path, string Extension, ContentType ContentType);
-    public static FileAnalysis AnalyseFile(string filePath)
-    {
-        ContentType contentType;
-        string fileExtension = Path.GetExtension(filePath);
-
-        if (!TryGetAnalysisResultAndSummary(fileExtension, out var result, out var summary))
-        {
-            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var bs = new BufferedStream(fs);
-            using var br = new BinaryReader(bs);
-
-            byte[] bytes = br.ReadBytes(AnalyzeSize);
-
-            TextEncoding encoding = GetTextEncoding(fileExtension, bytes);
-
-            SetAnalysisResult(fileExtension, result, encoding);
-
-            contentType = encoding switch
-            {
-                TextEncoding.ASCII => ContentType.ASCII,
-                TextEncoding.Unknown => ContentType.Binary,
-                _ => ContentType.Unicode
-            };
-        }
-        else
-        {
-            contentType = summary switch
-            {
-                AnalysisSummary.ASCII => ContentType.ASCII,
-                AnalysisSummary.Binary => ContentType.Binary,
-                _ => ContentType.Unicode
-            };
-        }
-
-        return new FileAnalysis(filePath, fileExtension, contentType);
+        return GuessMimeByContents(fs) ?? UnkownMimeType;
     }
 }

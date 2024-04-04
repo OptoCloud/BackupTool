@@ -1,7 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace OptoPacker.Database.Models;
+namespace BackupTool.Database.Models;
 
 public sealed class FileEntity
 {
@@ -9,6 +9,7 @@ public sealed class FileEntity
 
     public ulong Id { get; set; }
     public required string Name { get; set; }
+    public required string Mime { get; set; }
     public required string Extension { get; set; }
 
     public ulong BlobId { get; set; }
@@ -33,6 +34,10 @@ public sealed class FileEntityConfiguration : IEntityTypeConfiguration<FileEntit
             .HasColumnName("name")
             .IsRequired();
 
+        builder.Property(x => x.Mime)
+            .HasColumnName("mime")
+            .IsRequired();
+
         builder.Property(x => x.Extension)
             .HasColumnName("extension")
             .IsRequired();
@@ -48,12 +53,16 @@ public sealed class FileEntityConfiguration : IEntityTypeConfiguration<FileEntit
         builder.HasOne(x => x.Blob)
             .WithMany()
             .HasForeignKey(x => x.BlobId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasOne(x => x.Directory)
             .WithMany(x => x.Files)
             .HasForeignKey(x => x.DirectoryId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasIndex(x => x.Mime);
+
+        builder.HasIndex(x => x.Extension);
 
         builder.HasIndex(x => new { x.DirectoryId, x.Name, x.Extension })
             .IsUnique();

@@ -1,6 +1,6 @@
-﻿namespace OptoPacker.Utils;
+﻿namespace BackupTool.Utils;
 
-internal static class Utilss
+internal static class Utils
 {
     public static string BytesToHex(byte[] bytes)
     {
