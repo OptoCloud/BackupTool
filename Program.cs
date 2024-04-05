@@ -38,6 +38,8 @@ var importer = new Importer();
 // importer.ImportFileOrFolder(@"H:\");
 importer.ImportFileOrFolder(@"D:\3D Projects");
 
+var fileCacheManager = new FileCacheManager(256 * 1024 * 1024);
+
 var archiveWriter = new ArchiveWriter(@"D:\archive.7z", ArchiveWriter.CompressionLevel.Ultra);
 if (!await archiveWriter.Start())
 {
@@ -84,18 +86,21 @@ using (var context = new BTContext(options))
     cursorPos = Console.CursorTop;
     foreach (var file in importFiles)
     {
-        using var fs = File.OpenRead(file.FullPathStr);
+        using var cachedFile = await fileCacheManager.GetCachedFile(file.FullPathStr);
+        if (cachedFile == null) continue;
+
+        var stream = cachedFile.Stream;
 
         // Analayze for for mime type
         if (string.IsNullOrEmpty(file.Mime))
         {
-            file.Mime = FileAnalyzer.GuessMimeByContents(fs);
+            file.Mime = FileAnalyzer.GuessMimeByContents(stream);
         }
 
-        fs.Position = 0;
+        stream.Position = 0;
 
         // Hash the file
-        file.Hash = await HashingUtils.HashAsync(fs, hashingBlockSize, printStatusReport);
+        file.Hash = await HashingUtils.HashAsync(stream, hashingBlockSize, printStatusReport);
 
         filesAnalyzed++;
         bytesAnalyzed += file.Size;
