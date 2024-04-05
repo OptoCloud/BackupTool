@@ -178,9 +178,9 @@ internal static class GitignoreParser
         }
     }
 
-    static IEnumerable<GitRegex> ParseGitignore(Stream stream, string path)
+    private static IEnumerable<GitRegex> ParseGitignore(Stream stream, string path)
     {
-        using var streamReader = new StreamReader(stream, leaveOpen: true);
+        using var streamReader = new StreamReader(stream);
 
         // Convert ignore patterns to regex
         while (true)
@@ -213,14 +213,12 @@ internal static class GitignoreParser
 
     static IEnumerable<GitRegex> ParseGitignore(byte[] data, string path)
     {
-        using var stream = new MemoryStream(data);
-        return ParseGitignore(stream, path);
+        return ParseGitignore(new MemoryStream(data), path);
     }
 
     static IEnumerable<GitRegex> ParseGitignore(string path)
     {
-        using var fileStream = File.OpenRead(path);
-        return ParseGitignore(fileStream, path);
+        return ParseGitignore(File.OpenRead(path), path);
     }
 
     public static GitRegex[] GetUnityProjectIgnores(string projectDir)
