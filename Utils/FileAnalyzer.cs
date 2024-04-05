@@ -1,7 +1,10 @@
 ﻿using MimeDetective;
+using MimeDetective.Storage;
 using MimeMapping;
 using System.Collections.Frozen;
 using System.Collections.Immutable;
+using FileCategory = MimeDetective.Storage.Category;
+using TRIDLicense = MimeDetective.Definitions.Licensing.UsageType;
 
 namespace BackupTool.Utils;
 
@@ -10,7 +13,7 @@ internal static class FileAnalyzer
     public const string UnkownMimeType = "application/octet-stream";
 
     private static readonly FrozenDictionary<string, string> TypeMap;
-    private static readonly FrozenDictionary<string, ImmutableHashSet<MimeDetective.Storage.Category>> MimeCategories;
+    private static readonly FrozenDictionary<string, ImmutableHashSet<FileCategory>> MimeCategories;
     private static readonly ContentInspector Inspector;
 
     static FileAnalyzer()
@@ -53,9 +56,13 @@ internal static class FileAnalyzer
         typeMap.TryAdd("poitemplate", "text/plain+shader-hlsl");
         typeMap.TryAdd("poitemplatecollection", "text/plain+shader-hlsl");
 
-        var definitions = new MimeDetective.Definitions.ExhaustiveBuilder() { UsageType = MimeDetective.Definitions.Licensing.UsageType.PersonalNonCommercial }.Build();
+        var definitions = new MimeDetective.Definitions.ExhaustiveBuilder() { UsageType = TRIDLicense.PersonalNonCommercial }
+            .Build()
+            .TrimMeta()
+            .TrimDescription()
+            .ToImmutableArray();
 
-        var mimeCategories = new Dictionary<string, ImmutableHashSet<MimeDetective.Storage.Category>>();
+        var mimeCategories = new Dictionary<string, ImmutableHashSet<FileCategory>>();
         foreach (var definition in definitions)
         {
             if (string.IsNullOrEmpty(definition.File.MimeType)) continue;
@@ -73,10 +80,17 @@ internal static class FileAnalyzer
         TypeMap = typeMap.ToFrozenDictionary();
         MimeCategories = mimeCategories.ToFrozenDictionary();
 
-        Inspector = new ContentInspectorBuilder() { Definitions = definitions, Parallel = true }.Build() ?? throw new ApplicationException("Failed to build file inspector");
+        Inspector = new ContentInspectorBuilder() {
+            Definitions = definitions,
+            Parallel = true,
+            StringSegmentOptions = new()
+            {
+                OptimizeFor = MimeDetective.Engine.StringSegmentResourceOptimization.HighSpeed
+            },
+        }.Build() ?? throw new ApplicationException("Failed to build file inspector");
     }
 
-    public static ImmutableHashSet<MimeDetective.Storage.Category> GetCategories(string? mime)
+    public static ImmutableHashSet<FileCategory> GetCategories(string? mime)
     {
         if (string.IsNullOrEmpty(mime))
         {

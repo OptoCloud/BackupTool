@@ -32,6 +32,7 @@ ulong filesTotal = 0;
 ulong bytesTotal = 0;
 ulong filesAnalyzed = 0;
 ulong bytesAnalyzed = 0;
+ulong filesDeeplyAnalyzed = 0;
 
 var importer = new Importer();
 
@@ -95,6 +96,7 @@ using (var context = new BTContext(options))
         if (string.IsNullOrEmpty(file.Mime))
         {
             file.Mime = FileAnalyzer.GuessMimeByContents(stream);
+            filesDeeplyAnalyzed++;
         }
 
         stream.Position = 0;
@@ -201,6 +203,7 @@ void printStatusReport(ulong fileProgressBytes = 0)
         $"   {filesAnalyzed} / {filesTotal} files analyzed ({bytesAnalyzedFormatted} / {bytesTotalFormatted})",
         $"   {filesWrittenToDb} / {filesTotal} files written to DB",
         $"   {archiveWriter.WrittenFiles} / {archiveWriter.TotalFiles} blobs written to Tar ({tarWrittenBytesFormatted} / {tarTotalBytesFormatted})",
+        $"   Files deeply analyzed: {filesDeeplyAnalyzed}",
         $"   Average file size: {averageFileSizeFormatted}"
         );
 
