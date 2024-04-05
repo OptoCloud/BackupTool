@@ -21,7 +21,7 @@ internal sealed class ArchiveWriter
 
     private readonly string _archivePath;
     private readonly CompressionLevel _compressionLevel;
-    private readonly ConcurrentBag<TarFileEntry> _writerBag = [];
+    private readonly ConcurrentQueue<TarFileEntry> _writerQueue = [];
 
     private bool _run = false;
     private Task? _task = null;
@@ -57,7 +57,7 @@ internal sealed class ArchiveWriter
         {
             while (_run || WrittenFiles < TotalFiles)
             {
-                while (_writerBag.TryTake(out TarFileEntry? entry))
+                while (_writerQueue.TryDequeue(out TarFileEntry? entry))
                 {
                     if (entry.Size == 0) continue;
 
@@ -142,7 +142,7 @@ internal sealed class ArchiveWriter
     {
         if (size == 0) return;
 
-        _writerBag.Add(new TarFileEntry(path, internalPath, size));
+        _writerQueue.Enqueue(new TarFileEntry(path, internalPath, size));
         Interlocked.Increment(ref _totalFiles);
         Interlocked.Add(ref _totalBytes, size);
     }
