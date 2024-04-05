@@ -9,55 +9,72 @@ internal static class FileAnalyzer
 {
     public const string UnkownMimeType = "application/octet-stream";
 
-    private static FrozenDictionary<string, string> GetTypeMap()
+    private static readonly FrozenDictionary<string, string> TypeMap;
+    private static readonly FrozenDictionary<string, ImmutableHashSet<MimeDetective.Storage.Category>> MimeCategories;
+    private static readonly ContentInspector Inspector;
+
+    static FileAnalyzer()
     {
-        Dictionary<string, string> dict = MimeUtility.TypeMap.ToDictionary();
+        Dictionary<string, string> typeMap = MimeUtility.TypeMap.ToDictionary();
 
         // Programming languages
-        dict.TryAdd("cs", "text/plain");
-        dict.TryAdd("py", "text/plain");
-        dict.TryAdd("go", "text/plain");
-        dict.TryAdd("license", "text/plain");
-        dict.TryAdd("keep", "text/plain");
-        dict.TryAdd("gitkeep", "text/plain");
-        dict.TryAdd("gitignore", "text/plain");
-        dict.TryAdd("collabignore", "text/plain");
-        dict.TryAdd("vsconfig", "text/plain");
+        typeMap.TryAdd("cs", "text/plain");
+        typeMap.TryAdd("py", "text/plain");
+        typeMap.TryAdd("go", "text/plain");
+        typeMap.TryAdd("license", "text/plain");
+        typeMap.TryAdd("keep", "text/plain");
+        typeMap.TryAdd("gitkeep", "text/plain");
+        typeMap.TryAdd("gitignore", "text/plain");
+        typeMap.TryAdd("collabignore", "text/plain");
+        typeMap.TryAdd("vsconfig", "text/plain");
 
         // Unity
-        dict.TryAdd("mat", "text/xml");
-        dict.TryAdd("meta", "text/yaml");
-        dict.TryAdd("uxml", "text/yaml");
-        dict.TryAdd("unity", "text/yaml");
-        dict.TryAdd("asset", "text/yaml");
-        dict.TryAdd("anim", "text/yaml");
-        dict.TryAdd("prefab", "text/yaml");
-        dict.TryAdd("controller", "text/yaml");
-        dict.TryAdd("asmdef", "application/json");
-        dict.TryAdd("hlsl", "text/plain+shader-hlsl");
-        dict.TryAdd("shader", "text/plain+shader-hlsl");
-        dict.TryAdd("unitypackage", "application/x-tar+gz");
-        dict.TryAdd("rsp", "text/plain");
+        typeMap.TryAdd("mat", "text/xml");
+        typeMap.TryAdd("meta", "text/yaml");
+        typeMap.TryAdd("uxml", "text/yaml");
+        typeMap.TryAdd("unity", "text/yaml");
+        typeMap.TryAdd("asset", "text/yaml");
+        typeMap.TryAdd("anim", "text/yaml");
+        typeMap.TryAdd("prefab", "text/yaml");
+        typeMap.TryAdd("controller", "text/yaml");
+        typeMap.TryAdd("asmdef", "application/json");
+        typeMap.TryAdd("hlsl", "text/plain+shader-hlsl");
+        typeMap.TryAdd("shader", "text/plain+shader-hlsl");
+        typeMap.TryAdd("unitypackage", "application/x-tar+gz");
+        typeMap.TryAdd("rsp", "text/plain");
 
         // LilToon stuff
-        dict.TryAdd("fx", "text/plain+shader-hlsl");
-        dict.TryAdd("lilblock", "text/plain+shader-hlsl");
-        dict.TryAdd("lilinternal", "text/plain+shader-hlsl");
+        typeMap.TryAdd("fx", "text/plain+shader-hlsl");
+        typeMap.TryAdd("lilblock", "text/plain+shader-hlsl");
+        typeMap.TryAdd("lilinternal", "text/plain+shader-hlsl");
 
         // Poiyomi stuff
-        dict.TryAdd("poi", "text/plain");
-        dict.TryAdd("poitemplate", "text/plain+shader-hlsl");
-        dict.TryAdd("poitemplatecollection", "text/plain+shader-hlsl");
+        typeMap.TryAdd("poi", "text/plain");
+        typeMap.TryAdd("poitemplate", "text/plain+shader-hlsl");
+        typeMap.TryAdd("poitemplatecollection", "text/plain+shader-hlsl");
 
-        return dict.ToFrozenDictionary();
+        var definitions = new MimeDetective.Definitions.ExhaustiveBuilder() { UsageType = MimeDetective.Definitions.Licensing.UsageType.PersonalNonCommercial }.Build();
+
+        var mimeCategories = new Dictionary<string, ImmutableHashSet<MimeDetective.Storage.Category>>();
+        foreach (var definition in definitions)
+        {
+            if (string.IsNullOrEmpty(definition.File.MimeType)) continue;
+
+            foreach (var ext in definition.File.Extensions)
+            {
+                typeMap.TryAdd(ext, definition.File.MimeType);
+            }
+
+            mimeCategories[definition.File.MimeType] = mimeCategories.TryGetValue(definition.File.MimeType, out var cats)
+                ? cats.Union(definition.File.Categories)
+                : definition.File.Categories;
+        }
+
+        TypeMap = typeMap.ToFrozenDictionary();
+        MimeCategories = mimeCategories.ToFrozenDictionary();
+
+        Inspector = new ContentInspectorBuilder() { Definitions = definitions, Parallel = true }.Build() ?? throw new ApplicationException("Failed to build file inspector");
     }
-
-    private static IList<MimeDetective.Storage.Definition> ExhaustiveDefinitions => new MimeDetective.Definitions.ExhaustiveBuilder() { UsageType = MimeDetective.Definitions.Licensing.UsageType.PersonalNonCommercial }.Build();
-
-    private static readonly FrozenDictionary<string, string> TypeMap = GetTypeMap();
-    private static readonly FrozenDictionary<string, ImmutableHashSet<MimeDetective.Storage.Category>> MimeCategories = ExhaustiveDefinitions.Where(d => !string.IsNullOrEmpty(d.File.MimeType)).ToFrozenDictionary(d => d.File.MimeType!, d => d.File.Categories);
-
-    private static readonly ContentInspector Inspector = new ContentInspectorBuilder() { Definitions = ExhaustiveDefinitions, Parallel = true }.Build() ?? throw new ApplicationException("Failed to build file inspector");
 
     public static ImmutableHashSet<MimeDetective.Storage.Category> GetCategories(string? mime)
     {
@@ -66,7 +83,7 @@ internal static class FileAnalyzer
             return [];
         }
 
-        if (!MimeCategories.TryGetValue(mime, out ImmutableHashSet<MimeDetective.Storage.Category> categories))
+        if (!MimeCategories.TryGetValue(mime, out var categories))
         {
             return [];
         }
@@ -86,7 +103,7 @@ internal static class FileAnalyzer
             };
         }
 
-        if (!TypeMap.TryGetValue(ext, out string? mime)) // DEBUG: Is filename prefixed by '.'?
+        if (!TypeMap.TryGetValue(ext, out string? mime))
             return null;
 
         return mime;
