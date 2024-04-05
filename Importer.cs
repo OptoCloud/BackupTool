@@ -52,7 +52,7 @@ internal sealed class Importer
                 if (fileSize < 0) throw new UnreachableException("File cant have a negative size!");
 
                 file.Size = (ulong)fileSize;
-                file.Mime = FileAnalyzer.GuessMimeByExtension(filePath);
+                file.Mime = FileAnalyzer.GuessMimeByFileName(filePath);
 
                 Console.CursorLeft = cursorPos;
                 Console.Write(++numFiles);

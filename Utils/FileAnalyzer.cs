@@ -55,11 +55,17 @@ internal static class FileAnalyzer
     private static IList<MimeDetective.Storage.Definition> ExhaustiveDefinitions => new MimeDetective.Definitions.ExhaustiveBuilder() { UsageType = MimeDetective.Definitions.Licensing.UsageType.PersonalNonCommercial }.Build();
     private static readonly ContentInspector Inspector = new ContentInspectorBuilder() { Definitions = ExhaustiveDefinitions, Parallel = true }.Build() ?? throw new ApplicationException("Failed to build file inspector");
 
-    public static string? GuessMimeByExtension(string path)
+    public static string? GuessMimeByFileName(string path)
     {
         string ext = PathUtils.GetExtension(path).ToLowerInvariant();
         if (ext.Length <= 0)
-            return null;
+        {
+            return Path.GetFileName(path) switch
+            {
+                "LICENSE" or "README" => "text/plain",
+                _ => null,
+            };
+        }
 
         if (!TypeMap.TryGetValue(ext, out string? mime)) // DEBUG: Is filename prefixed by '.'?
             return null;
@@ -80,7 +86,7 @@ internal static class FileAnalyzer
 
     public static string GuessMime(string path)
     {
-        string? mime = GuessMimeByExtension(path);
+        string? mime = GuessMimeByFileName(path);
         if (mime != null) return mime;
 
         string filename = Path.GetFileName(path);
