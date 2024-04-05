@@ -1,6 +1,7 @@
 ﻿using MimeDetective;
 using MimeMapping;
-using System.Collections.ObjectModel;
+using System.Collections.Frozen;
+using System.Collections.Immutable;
 
 namespace BackupTool.Utils;
 
@@ -8,7 +9,7 @@ internal static class FileAnalyzer
 {
     public const string UnkownMimeType = "application/octet-stream";
 
-    private static ReadOnlyDictionary<string, string> GetTypeMap()
+    private static FrozenDictionary<string, string> GetTypeMap()
     {
         Dictionary<string, string> dict = MimeUtility.TypeMap.ToDictionary();
 
@@ -48,12 +49,30 @@ internal static class FileAnalyzer
         dict.TryAdd("poitemplate", "text/plain+shader-hlsl");
         dict.TryAdd("poitemplatecollection", "text/plain+shader-hlsl");
 
-        return dict.AsReadOnly();
+        return dict.ToFrozenDictionary();
     }
-    private static readonly ReadOnlyDictionary<string, string> TypeMap = GetTypeMap();
 
     private static IList<MimeDetective.Storage.Definition> ExhaustiveDefinitions => new MimeDetective.Definitions.ExhaustiveBuilder() { UsageType = MimeDetective.Definitions.Licensing.UsageType.PersonalNonCommercial }.Build();
+
+    private static readonly FrozenDictionary<string, string> TypeMap = GetTypeMap();
+    private static readonly FrozenDictionary<string, ImmutableHashSet<MimeDetective.Storage.Category>> MimeCategories = ExhaustiveDefinitions.Where(d => !string.IsNullOrEmpty(d.File.MimeType)).ToFrozenDictionary(d => d.File.MimeType!, d => d.File.Categories);
+
     private static readonly ContentInspector Inspector = new ContentInspectorBuilder() { Definitions = ExhaustiveDefinitions, Parallel = true }.Build() ?? throw new ApplicationException("Failed to build file inspector");
+
+    public static ImmutableHashSet<MimeDetective.Storage.Category> GetCategories(string? mime)
+    {
+        if (string.IsNullOrEmpty(mime))
+        {
+            return [];
+        }
+
+        if (!MimeCategories.TryGetValue(mime, out ImmutableHashSet<MimeDetective.Storage.Category> categories))
+        {
+            return [];
+        }
+
+        return categories;
+    }
 
     public static string? GuessMimeByFileName(string path)
     {

@@ -220,28 +220,69 @@ void printStatus(int basePos, string title, params string[] lines)
     Console.Write(sb.ToString());
 }
 
-class ImportFileByMimeSorter : IComparer<ImportFileInfo>
+sealed class ImportFileByMimeSorter : IComparer<ImportFileInfo>
 {
+    
+
+    private int CompareMime(ImportFileInfo x, ImportFileInfo y)
+    {
+        var xCats = FileAnalyzer.GetCategories(x.Mime);
+        if (xCats.IsEmpty) return 0;
+
+        var yCats = FileAnalyzer.GetCategories(y.Mime);
+        if (yCats.IsEmpty) return 0;
+
+        var xIsEncrypted = xCats.Contains(MimeDetective.Storage.Category.Encrypted);
+        var yIsEncrypted = yCats.Contains(MimeDetective.Storage.Category.Encrypted);
+        if (xIsEncrypted != yIsEncrypted) return xIsEncrypted ? 1 : -1;
+
+        var xIsCompressed = xCats.Contains(MimeDetective.Storage.Category.Compressed);
+        var yIsCompressed = yCats.Contains(MimeDetective.Storage.Category.Compressed);
+        if (xIsCompressed !=  yIsCompressed) return xIsCompressed ? 1 : -1;
+
+        var xIsExecutable = xCats.Contains(MimeDetective.Storage.Category.Executable);
+        var yIsExecutable = yCats.Contains(MimeDetective.Storage.Category.Executable);
+        if (xIsExecutable != yIsExecutable) return xIsExecutable ? 1 : -1;
+
+        var xIsVideo = xCats.Contains(MimeDetective.Storage.Category.Video);
+        var yIsVideo = yCats.Contains(MimeDetective.Storage.Category.Video);
+        if (xIsVideo != yIsVideo) return xIsVideo ? 1 : - 1;
+
+        var xIsImage = xCats.Contains(MimeDetective.Storage.Category.Image);
+        var yIsImage = yCats.Contains(MimeDetective.Storage.Category.Image);
+        if (xIsImage != yIsImage) return xIsImage ? 1 : -1;
+
+        var xIsAudio = xCats.Contains(MimeDetective.Storage.Category.Audio);
+        var yIsAudio = yCats.Contains(MimeDetective.Storage.Category.Audio);
+        if (xIsAudio != yIsAudio) return xIsAudio ? 1 : -1;
+
+        var xIsConfiguration = xCats.Contains(MimeDetective.Storage.Category.Configuration);
+        var yIsConfiguration = yCats.Contains(MimeDetective.Storage.Category.Configuration);
+        if (xIsConfiguration != yIsConfiguration) return xIsConfiguration ? -1 : 1; // Reverse order here, scripts are usually plaintext (very compressible)
+
+        var xIsScript = xCats.Contains(MimeDetective.Storage.Category.Script);
+        var yIsScript = yCats.Contains(MimeDetective.Storage.Category.Script);
+        if (xIsScript != yIsScript) return xIsScript ? -1 : 1; // Reverse order here, scripts are usually plaintext (very compressible)
+
+        var xIsDocument = xCats.Contains(MimeDetective.Storage.Category.Document);
+        var yIsDocument = yCats.Contains(MimeDetective.Storage.Category.Document);
+        if (xIsDocument != yIsDocument) return xIsDocument ? 1 : -1;
+
+        return string.Compare(x.Mime, y.Mime);
+    }
+
     public int Compare(ImportFileInfo? x, ImportFileInfo? y)
     {
-        if (x == null)
-        {
-            return y == null ? 0 : 1;
-        }
-        else if (y == null)
-        {
-            return -1;
-        }
+        if (x == y) return 0;
+        if (x == null) return 1;
+        if (y == null) return -1;
 
-        int mimeCompare = string.Compare(x.Mime, y.Mime);
-        if (mimeCompare != 0) return mimeCompare;
+        int categoryCompare = CompareMime(x, y);
+        if (categoryCompare != 0) return categoryCompare;
 
         int extCompare = string.Compare(PathUtils.GetExtension(x.Name), PathUtils.GetExtension(y.Name));
         if (extCompare != 0) return extCompare;
 
-        int sizeCompare = x.Size.CompareTo(y.Size);
-        if (sizeCompare != 0) return sizeCompare;
-
-        return string.Compare(x.Name, y.Name);
+        return x.Size.CompareTo(y.Size);
     }
 }
