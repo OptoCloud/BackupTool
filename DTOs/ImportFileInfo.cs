@@ -7,6 +7,7 @@ public sealed record ImportFileInfo(string Name, ImportDirectoryInfo Directory)
     public ulong Size { get; set; } = 0;
 
     public string? Mime { get; set; }
+    public byte[]? Hash { get; set; }
 
     public BlobEntity? BlobEntity { get; set; }
     public ulong? BlobId => BlobEntity?.Id;

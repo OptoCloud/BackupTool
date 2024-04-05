@@ -9,7 +9,7 @@ using System.Diagnostics;
 using System.Text;
 
 const int ChunkSize = 128;
-const int hashingBlockSize = 4 * 1024 * 1024;
+const int hashingBlockSize = 16 * 1024;
 int ParallelTasks = Environment.ProcessorCount;
 
 // Get path to temp folder, and create sqlite database
@@ -80,6 +80,27 @@ using (var context = new BTContext(options))
         bytesTotal += file.Size;
     }
 
+    Console.WriteLine("Further analyzing and hashing files...");
+    cursorPos = Console.CursorTop;
+    foreach (var file in importFiles)
+    {
+        using var fs = File.OpenRead(file.FullPathStr);
+
+        // Analayze for for mime type
+        if (string.IsNullOrEmpty(file.Mime))
+        {
+            file.Mime = FileAnalyzer.GuessMimeByContents(fs);
+        }
+
+        fs.Position = 0;
+
+        // Hash the file
+        file.Hash = await HashingUtils.HashAsync(fs, hashingBlockSize, printStatusReport);
+
+        filesAnalyzed++;
+        bytesAnalyzed += file.Size;
+    }
+
     Console.WriteLine("Sorting files for better compression ratio...");
     Array.Sort(importFiles, new ImportFileByMimeSorter());
 
@@ -87,32 +108,16 @@ using (var context = new BTContext(options))
 
     ulong blobIdCounter = 0;
     ulong fileIdCounter = 0;
-    Console.WriteLine("Starting to process files...");
-    cursorPos = Console.CursorTop;
+    Console.WriteLine("Writing files to database and archive...");
     foreach (var files in importFiles.GroupBy(f => f.Mime))
     {
+        Console.WriteLine($"Writing {files.Key} files...");
+        cursorPos = Console.CursorTop;
         foreach (var file in files)
         {
-            byte[] hash;
-
-            using (var fs = File.OpenRead(file.FullPathStr))
-            {
-                // Analayze for for mime type
-                if (string.IsNullOrEmpty(file.Mime))
-                {
-                    file.Mime = FileAnalyzer.GuessMimeByContents(fs);
-                }
-
-                fs.Position = 0;
-
-                // Hash the file
-                hash = await HashingUtils.HashAsync(fs, hashingBlockSize, printStatusReport);
-            }
-
-            filesAnalyzed++;
-            bytesAnalyzed += file.Size;
-
             bool newBlob = false;
+
+            var hash = file.Hash ?? throw new UnreachableException("Hash should be populated!");
 
             var hashStr = Utils.BytesToHex(hash);
             if (!blobCache.TryGetValue(hashStr, out ulong blobId))
