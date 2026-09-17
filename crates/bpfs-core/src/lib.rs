@@ -1,6 +1,7 @@
 pub mod constants;
 pub mod errors;
 pub mod filetimes;
+pub mod progress;
 pub mod signing;
 pub mod sort;
 pub mod string_arena;

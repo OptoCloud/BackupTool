@@ -6,6 +6,7 @@ A backup tool built around **BPFS**, a custom archive format. It includes a comm
 
 - Deduplicates identical files so each unique blob is stored once.
 - Groups similar files together before compressing them, which improves the compression ratio.
+- Compresses data in 64 MB blocks on all CPU cores with Zstandard (default) or Brotli, so memory use stays bounded and restoring a file only decompresses the blocks it needs.
 - Stores already-compressed or high-entropy data (images, video, archives) without compressing it again.
 - Uses generational archives. Each generation has its own string table, and its SHA-256 hash links it to the previous one. Generations can optionally be signed with Ed25519.
 - Verifies archives: by default it checks every section hash and the generation hash chain, and `--deep` also re-hashes every blob's content.
@@ -44,7 +45,7 @@ pnpm tauri build    # produce installers
 ## CLI usage
 
 ```sh
-bpfs-cli pack <SRC> <OUT> [--final-hash] [--no-compress]
+bpfs-cli pack <SRC> <OUT> [--final-hash] [--compression zstd|brotli|none]
 bpfs-cli ls <ARCHIVE> [--tree]
 bpfs-cli extract <ARCHIVE> <DEST> [--path <PATH>...] [--overwrite]
 bpfs-cli verify <ARCHIVE> [--deep]

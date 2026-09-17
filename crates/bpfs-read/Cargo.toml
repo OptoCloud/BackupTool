@@ -12,20 +12,17 @@ bpfs-core = { path = "../bpfs-core" }
 anyhow     = "1"
 thiserror  = "2"
 sha2       = "0.11"
-memmap2    = "0.9"
 ed25519-dalek = "3"
 
 # Compression backends (match packer)
-brotli     = { version = "9", optional = true }
+brotli     = "9"
 lz4_flex = { version = "0.14", optional = true }
-zstd       = { version = "0.14", optional = true, default-features = false }
+zstd       = { version = "0.14", default-features = false }
 
 [features]
-default = ["compression-brotli"]
+default = []
 
-compression-brotli = ["dep:brotli"]
 compression-lz4    = ["dep:lz4_flex"]
-compression-zstd   = ["dep:zstd"]
 
 [dev-dependencies]
 bpfs-pack = { path = "../bpfs-pack" }

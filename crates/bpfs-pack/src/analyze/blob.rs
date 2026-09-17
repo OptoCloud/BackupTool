@@ -1,19 +1,25 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, BufReader, Read},
+    io::{self, Read},
     path::Path,
 };
 
 use crate::analyze::shannon::EntropyStream;
 use crate::scan::types::FileEntry;
 use bpfs_core::constants::EMPTY_HASH;
-use memmap2::MmapOptions;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 
-/// Minimum size for using memory-mapped I/O (in bytes).
-const MMAP_THRESHOLD: u64 = 100 * 1024 * 1024; // 100 MiB
+/// Files above this size are read in `LARGE_CHUNK`s instead of `SMALL_CHUNK`s.
+const LARGE_FILE: u64 = 16 * 1024 * 1024;
+const LARGE_CHUNK: usize = 4 * 1024 * 1024;
+const SMALL_CHUNK: usize = 64 * 1024;
+
+/// Called after each chunk of a file is analyzed with
+/// `(path, file_bytes_done, file_size_hint, chunk_len)`. Returning an error
+/// (e.g. on cancellation) aborts the analysis.
+pub type ChunkCallback<'a> = dyn Fn(&Path, u64, u64, u64) -> io::Result<()> + Sync + 'a;
 
 const BUCKET_SIZE: u64 = 64;
 
@@ -27,52 +33,41 @@ const BUCKET_SIZE: u64 = 64;
 ///
 /// # Errors
 ///
-/// Returns an `io::Error` if the file cannot be opened or read.
-fn perform_data_analysis(file_path: &Path, size_hint: u64) -> io::Result<BlobInfo> {
-    let file = File::open(file_path)?;
+/// Returns an `io::Error` if the file cannot be opened or read, or if
+/// `on_chunk` returns one.
+fn perform_data_analysis(
+    file_path: &Path,
+    size_hint: u64,
+    on_chunk: &ChunkCallback,
+) -> io::Result<BlobInfo> {
+    let mut file = File::open(file_path)?;
     let mut sha256 = Sha256::new();
     let mut entropy_stream = EntropyStream::new();
 
-    let mut actual_size;
-
-    if size_hint > MMAP_THRESHOLD {
-        // Memory-map large files
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
-        let full = &mmap[..];
-
-        actual_size = full.len();
-
-        // Process entire file
-        sha256.update(full);
-        entropy_stream.feed_slice(full);
+    // Large files get a bigger buffer; plain reads (rather than mmap) keep
+    // memory use flat regardless of file size.
+    let chunk = if size_hint > LARGE_FILE {
+        LARGE_CHUNK
     } else {
-        // Buffered read for smaller files
-        let mut reader = BufReader::new(&file);
-        let mut buffer = [0u8; 32 * 1024];
-
-        actual_size = 0;
-
-        loop {
-            let read_bytes = reader.read(&mut buffer)?;
-            if read_bytes == 0 {
-                break;
-            }
-
-            sha256.update(&buffer[..read_bytes]);
-            entropy_stream.feed_slice(&buffer[..read_bytes]);
-
-            actual_size += read_bytes;
+        SMALL_CHUNK
+    };
+    let mut buffer = vec![0u8; chunk];
+    let mut actual_size = 0usize;
+    loop {
+        let read_bytes = file.read(&mut buffer)?;
+        if read_bytes == 0 {
+            break;
         }
+        sha256.update(&buffer[..read_bytes]);
+        entropy_stream.feed_slice(&buffer[..read_bytes]);
+        actual_size += read_bytes;
+        on_chunk(file_path, actual_size as u64, size_hint, read_bytes as u64)?;
     }
 
-    // Finalize hash and entropy
-    let hash_result = sha256.finalize();
-    let entropy = entropy_stream.entropy() as f32;
-
     Ok(BlobInfo {
-        hash: hash_result.into(),
+        hash: sha256.finalize().into(),
         size: actual_size,
-        entropy,
+        entropy: entropy_stream.entropy() as f32,
     })
 }
 
@@ -95,7 +90,12 @@ pub struct BlobGroup {
 
 /// Deduplicates a list of files into blobs, returning each blob and the indices
 /// of files (in `files`) that map to it.
-pub fn collect_unique_blobs(files: &[FileEntry]) -> anyhow::Result<Vec<BlobGroup>> {
+///
+/// `on_chunk` is called from several threads as files are analyzed.
+pub fn collect_unique_blobs(
+    files: &[FileEntry],
+    on_chunk: &ChunkCallback,
+) -> io::Result<Vec<BlobGroup>> {
     // 1) Split zero-sized from the rest
     let (empties, non_empty): (Vec<_>, Vec<_>) = files
         .iter()
@@ -118,7 +118,14 @@ pub fn collect_unique_blobs(files: &[FileEntry]) -> anyhow::Result<Vec<BlobGroup
             let mut local = HashMap::with_capacity(idxs.len());
             for &i in &idxs {
                 let entry = &files[i];
-                let info = perform_data_analysis(&entry.fs_path, entry.size_hint)?;
+                let info = perform_data_analysis(&entry.fs_path, entry.size_hint, on_chunk)
+                    .map_err(|e| {
+                        if e.kind() == io::ErrorKind::Interrupted {
+                            e
+                        } else {
+                            io::Error::new(e.kind(), format!("{}: {e}", entry.fs_path.display()))
+                        }
+                    })?;
 
                 local
                     .entry(info.hash)

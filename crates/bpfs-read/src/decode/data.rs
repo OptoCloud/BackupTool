@@ -1,118 +1,212 @@
 use bpfs_core::types::enums::CompressionType;
-use brotli::Decompressor;
 use sha2::{Digest, Sha256};
-use std::io::{self, Error, ErrorKind, Read};
+use std::io::{self, Error, ErrorKind, Read, Seek, SeekFrom};
 
-const BLOCK_SIZE: usize = 16 * 1024;
+use crate::io::ReadLeExt;
 
-pub struct DecodedDataSection {
-    pub name_stridx: u32,
-    pub compression: CompressionType,
-    pub data: Vec<u8>,
+/// Largest block (raw or stored) the reader will allocate for.
+const MAX_BLOCK_BYTES: u32 = 1024 * 1024 * 1024;
+
+/// Where one compressed block lives and what it decodes to.
+#[derive(Clone, Debug)]
+pub struct BlockRef {
+    /// Offset of this block's first byte within the section's raw stream.
+    pub raw_offset: u64,
+    pub raw_size: u32,
+    /// Absolute offset of the block's data in the archive.
+    pub stored_offset: u64,
+    pub stored_size: u32,
+    pub hash: [u8; 32],
 }
 
-/// Reads a DataSection written by `bpfs_pack::encode::data::write_data_section`.
-///
-/// Layout: `u32 name_stridx, u8 compression, u8 pad[3], u64 size, u8 data[size], u8 hash[32]`.
-pub fn read_data_section<R: Read>(reader: &mut R) -> io::Result<DecodedDataSection> {
-    let mut hasher = Sha256::new();
+/// A DataSection's header and block index; the data itself stays on disk.
+#[derive(Clone, Debug)]
+pub struct SectionIndex {
+    pub name_stridx: u32,
+    pub compression: CompressionType,
+    pub block_size: u32,
+    pub blocks: Vec<BlockRef>,
+    /// Total uncompressed size of the section.
+    pub raw_size: u64,
+}
 
-    let mut header = [0u8; 4 + 1 + 3 + 8];
-    reader.read_exact(&mut header)?;
-    hasher.update(header);
+impl SectionIndex {
+    /// Index of the block containing raw offset `pos`.
+    pub fn block_at(&self, pos: u64) -> Option<usize> {
+        let idx = self.blocks.partition_point(|b| b.raw_offset <= pos);
+        let idx = idx.checked_sub(1)?;
+        let b = &self.blocks[idx];
+        (pos < b.raw_offset + b.raw_size as u64).then_some(idx)
+    }
+}
 
-    let name_stridx = u32::from_le_bytes(header[0..4].try_into().unwrap());
-    let comp_byte = header[4];
-    let compression = CompressionType::try_from(comp_byte).map_err(|b| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("unknown compression type {b}"),
-        )
-    })?;
-    let size = u64::from_le_bytes(header[8..16].try_into().unwrap());
+fn invalid(msg: impl Into<String>) -> Error {
+    Error::new(ErrorKind::InvalidData, msg.into())
+}
 
-    let mut compressed = vec![0u8; size as usize];
-    reader.read_exact(&mut compressed)?;
-    hasher.update(&compressed);
+/// Reads a DataSection header and its block headers, seeking past block data.
+/// See `bpfs_pack::encode::data::SectionEncoder` for the layout.
+pub fn index_data_section<R: Read + Seek>(reader: &mut R) -> io::Result<SectionIndex> {
+    let start = reader.stream_position()?;
+    let file_len = reader.seek(SeekFrom::End(0))?;
+    reader.seek(SeekFrom::Start(start))?;
 
-    let mut expected_hash = [0u8; 32];
-    reader.read_exact(&mut expected_hash)?;
-    let actual_hash = hasher.finalize();
-    if actual_hash[..] != expected_hash {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "DataSection checksum mismatch",
-        ));
+    let name_stridx = reader.read_u32_le()?;
+    let mut comp = [0u8; 4];
+    reader.read_exact(&mut comp)?;
+    let compression = CompressionType::try_from(comp[0])
+        .map_err(|b| invalid(format!("unknown compression type {b}")))?;
+    let block_size = reader.read_u32_le()?;
+    if block_size == 0 || block_size > MAX_BLOCK_BYTES {
+        return Err(invalid(format!("invalid block size {block_size}")));
     }
 
-    let data = match compression {
-        CompressionType::None => compressed,
-        CompressionType::Brotli => {
-            let mut out = Vec::new();
-            Decompressor::new(&compressed[..], BLOCK_SIZE).read_to_end(&mut out)?;
-            out
+    let mut blocks = Vec::new();
+    let mut raw_offset = 0u64;
+    loop {
+        let raw_size = reader.read_u32_le()?;
+        let stored_size = reader.read_u32_le()?;
+        if raw_size == 0 {
+            if stored_size != 0 {
+                return Err(invalid("malformed section terminator"));
+            }
+            break;
         }
-        other => {
+        if raw_size > block_size || stored_size > MAX_BLOCK_BYTES {
+            return Err(invalid("block size exceeds section limits"));
+        }
+        let mut hash = [0u8; 32];
+        reader.read_exact(&mut hash)?;
+        let stored_offset = reader.stream_position()?;
+        let end = reader.seek(SeekFrom::Current(stored_size as i64))?;
+        if end > file_len {
             return Err(Error::new(
-                ErrorKind::InvalidData,
-                format!("CompressionType {other:?} is not implemented for decoding"),
+                ErrorKind::UnexpectedEof,
+                "data block is truncated",
             ));
         }
-    };
+        blocks.push(BlockRef {
+            raw_offset,
+            raw_size,
+            stored_offset,
+            stored_size,
+            hash,
+        });
+        raw_offset += raw_size as u64;
+    }
 
-    Ok(DecodedDataSection {
+    Ok(SectionIndex {
         name_stridx,
         compression,
-        data,
+        block_size,
+        blocks,
+        raw_size: raw_offset,
     })
+}
+
+/// Reads, checks and decompresses one block.
+pub fn read_block<R: Read + Seek>(
+    reader: &mut R,
+    compression: CompressionType,
+    block: &BlockRef,
+) -> io::Result<Vec<u8>> {
+    reader.seek(SeekFrom::Start(block.stored_offset))?;
+    let mut stored = vec![0u8; block.stored_size as usize];
+    reader.read_exact(&mut stored)?;
+    if Sha256::digest(&stored)[..] != block.hash {
+        return Err(invalid("data block checksum mismatch"));
+    }
+
+    let raw = match compression {
+        CompressionType::None => stored,
+        CompressionType::Brotli => {
+            let mut out = Vec::with_capacity(block.raw_size as usize);
+            brotli::Decompressor::new(&stored[..], 64 * 1024)
+                .take(block.raw_size as u64 + 1)
+                .read_to_end(&mut out)?;
+            out
+        }
+        CompressionType::Zstd => zstd::bulk::decompress(&stored, block.raw_size as usize)?,
+        other => {
+            return Err(invalid(format!(
+                "CompressionType {other:?} is not implemented for decoding"
+            )))
+        }
+    };
+    if raw.len() != block.raw_size as usize {
+        return Err(invalid("data block has the wrong decompressed size"));
+    }
+    Ok(raw)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use bpfs_pack::encode::data::write_data_section;
+    use std::io::Cursor;
 
-    #[test]
-    fn roundtrip_none() {
+    fn roundtrip(compression: CompressionType, block_size: u32, raw: &[u8]) -> Vec<u8> {
         let mut buf = Vec::new();
-        write_data_section(&mut buf, 3, CompressionType::None, b"hello world").unwrap();
-        let section = read_data_section(&mut &buf[..]).unwrap();
-        assert_eq!(section.name_stridx, 3);
-        assert_eq!(section.compression, CompressionType::None);
-        assert_eq!(section.data, b"hello world");
+        write_data_section(&mut buf, 3, compression, block_size, raw).unwrap();
+        let mut cursor = Cursor::new(buf);
+        let index = index_data_section(&mut cursor).unwrap();
+        assert_eq!(index.name_stridx, 3);
+        assert_eq!(index.compression, compression);
+        assert_eq!(index.raw_size, raw.len() as u64);
+        assert_eq!(cursor.position(), cursor.get_ref().len() as u64);
+
+        let mut out = Vec::new();
+        for b in &index.blocks {
+            out.extend(read_block(&mut cursor, compression, b).unwrap());
+        }
+        out
     }
 
     #[test]
-    fn roundtrip_brotli() {
-        let raw = vec![b'z'; 50_000];
-        let mut buf = Vec::new();
-        write_data_section(&mut buf, 1, CompressionType::Brotli, &raw).unwrap();
-        let section = read_data_section(&mut &buf[..]).unwrap();
-        assert_eq!(section.data, raw);
+    fn roundtrips_every_codec_across_blocks() {
+        let raw: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
+        for compression in [
+            CompressionType::None,
+            CompressionType::Brotli,
+            CompressionType::Zstd,
+        ] {
+            assert_eq!(roundtrip(compression, 4096, &raw), raw, "{compression:?}");
+        }
     }
 
     #[test]
-    fn empty_payload_roundtrips() {
-        let mut buf = Vec::new();
-        write_data_section(&mut buf, 0, CompressionType::None, b"").unwrap();
-        let section = read_data_section(&mut &buf[..]).unwrap();
-        assert!(section.data.is_empty());
+    fn empty_section_has_no_blocks() {
+        assert!(roundtrip(CompressionType::Zstd, 1024, b"").is_empty());
     }
 
     #[test]
-    fn detects_corruption() {
+    fn block_at_finds_containing_block() {
         let mut buf = Vec::new();
-        write_data_section(&mut buf, 0, CompressionType::None, b"payload").unwrap();
-        let mid = buf.len() / 2;
-        buf[mid] ^= 0xFF;
-        assert!(read_data_section(&mut &buf[..]).is_err());
+        write_data_section(&mut buf, 0, CompressionType::None, 10, &[0u8; 25]).unwrap();
+        let index = index_data_section(&mut Cursor::new(buf)).unwrap();
+        assert_eq!(index.block_at(0), Some(0));
+        assert_eq!(index.block_at(9), Some(0));
+        assert_eq!(index.block_at(10), Some(1));
+        assert_eq!(index.block_at(24), Some(2));
+        assert_eq!(index.block_at(25), None);
     }
 
     #[test]
-    fn truncated_input_errors() {
+    fn detects_corrupted_block() {
         let mut buf = Vec::new();
-        write_data_section(&mut buf, 0, CompressionType::None, b"payload").unwrap();
+        write_data_section(&mut buf, 0, CompressionType::None, 1024, b"payload").unwrap();
+        let len = buf.len();
+        buf[len - 10] ^= 0xFF; // inside the block data
+        let mut cursor = Cursor::new(buf);
+        let index = index_data_section(&mut cursor).unwrap();
+        assert!(read_block(&mut cursor, index.compression, &index.blocks[0]).is_err());
+    }
+
+    #[test]
+    fn truncated_section_errors() {
+        let mut buf = Vec::new();
+        write_data_section(&mut buf, 0, CompressionType::None, 1024, b"payload").unwrap();
         buf.truncate(buf.len() - 5);
-        assert!(read_data_section(&mut &buf[..]).is_err());
+        assert!(index_data_section(&mut Cursor::new(buf)).is_err());
     }
 }

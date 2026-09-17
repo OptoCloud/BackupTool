@@ -1,5 +1,8 @@
 pub const MAGIC: [u8; 4] = *b"BPFS";
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
+
+/// Default uncompressed size of one data section block.
+pub const DATA_BLOCK_SIZE: u32 = 64 * 1024 * 1024;
 
 /// Marks the end of a Generation record. Distinct from `MAGIC` so a corrupt
 /// stream that gets desynced doesn't silently re-align on the wrong marker.

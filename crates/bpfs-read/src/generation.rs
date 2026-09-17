@@ -1,6 +1,5 @@
 use crate::io::ReadLeExt;
-use sha2::{Digest, Sha256};
-use std::io::Read;
+use std::io::{Read, Seek};
 
 use bpfs_core::constants::GENERATION_SUFFIX;
 use bpfs_core::errors::{ArchiveError, Result};
@@ -8,84 +7,98 @@ use bpfs_core::strings::StringTable;
 use bpfs_core::types::packed::{BlobEntry, DirectoryEntry, FileEntry};
 use bpfs_core::validate::{validate_directory_tree, validate_file_refs};
 
-use crate::decode::data::DecodedDataSection;
-use crate::decode::{data, entries, strings};
-use crate::io::TeeHashReader;
+use crate::decode::data::{index_data_section, SectionIndex};
+use crate::decode::{entries, strings};
 
+/// Offset value for blobs whose bytes live in another generation.
+pub const NOT_OWNED: u64 = u64::MAX;
+
+/// One generation's metadata. Data sections are indexed, not loaded.
 pub struct Generation {
     pub created_at: u64,
     pub strings: StringTable,
     pub blobs: Vec<BlobEntry>,
     pub dirs: Vec<DirectoryEntry>,
     pub files: Vec<FileEntry>,
-    pub data_sections: Vec<DecodedDataSection>,
+    pub data_sections: Vec<SectionIndex>,
     pub blob_hashes: Vec<[u8; 32]>,
     pub previous_integrity_hash: [u8; 32],
+    /// As stored in the archive; checked by `verify::verify_integrity`.
     pub integrity_hash: [u8; 32],
     pub signature_type: u32,
     pub signature: Vec<u8>,
+    /// Archive offset where this generation starts.
+    pub offset: u64,
+    /// Number of bytes covered by `integrity_hash`, starting at `offset`.
+    pub hashed_len: u64,
+    /// For each blob stored in this generation, its offset within its data
+    /// section's raw stream; `NOT_OWNED` for blobs stored elsewhere.
+    pub blob_offsets: Vec<u64>,
+    /// For each data section, the indices (into `blobs`) of the blobs stored
+    /// in it, ordered by `section_blob_idx`.
+    pub section_blobs: Vec<Vec<usize>>,
 }
 
-/// Reads one `Generation` record as written by
-/// `bpfs_pack::encode::generation::write_generation`, verifying its
-/// `integrity_hash` and structural consistency along the way.
-pub fn read_generation<R: Read>(reader: &mut R) -> Result<Generation> {
-    let mut hasher = Sha256::new();
-
-    let created_at;
-    let string_list;
-    let blobs;
-    let dirs;
-    let files;
-    let data_sections;
-    let blob_hashes;
-    let previous_integrity_hash;
-
-    {
-        let mut tee = TeeHashReader::new(reader, &mut hasher);
-
-        created_at = tee.read_u64_le()?;
-        let file_count = tee.read_u32_le()? as usize;
-        let dir_count = tee.read_u32_le()? as usize;
-        let blob_count = tee.read_u32_le()? as usize;
-
-        string_list = strings::read_string_section(&mut tee)?;
-
-        blobs = (0..blob_count)
-            .map(|_| entries::read_blob_entry(&mut tee))
-            .collect::<std::io::Result<Vec<_>>>()?;
-        dirs = (0..dir_count)
-            .map(|_| entries::read_directory_entry(&mut tee))
-            .collect::<std::io::Result<Vec<_>>>()?;
-        files = (0..file_count)
-            .map(|_| entries::read_file_entry(&mut tee))
-            .collect::<std::io::Result<Vec<_>>>()?;
-
-        let data_section_count = tee.read_u32_le()? as usize;
-        data_sections = (0..data_section_count)
-            .map(|_| data::read_data_section(&mut tee))
-            .collect::<std::io::Result<Vec<_>>>()?;
-
-        blob_hashes = (0..blob_count)
-            .map(|_| {
-                let mut h = [0u8; 32];
-                tee.read_exact(&mut h)?;
-                Ok::<_, std::io::Error>(h)
-            })
-            .collect::<std::io::Result<Vec<_>>>()?;
-
-        let mut prev = [0u8; 32];
-        tee.read_exact(&mut prev)?;
-        previous_integrity_hash = prev;
+impl Generation {
+    /// Bytes of blob data physically stored in this generation.
+    pub fn owned_blob_bytes(&self) -> u64 {
+        self.blobs
+            .iter()
+            .zip(&self.blob_offsets)
+            .filter(|(_, &off)| off != NOT_OWNED)
+            .map(|(b, _)| b.raw_size)
+            .sum()
     }
+}
 
-    let computed_integrity_hash: [u8; 32] = hasher.finalize().into();
+/// Reads the metadata of the generation at the reader's position (index
+/// `gen_idx` in the archive) as written by
+/// `bpfs_pack::encode::generation::write_generation`, leaving the reader just
+/// past it. Data blocks are skipped and hashes are not recomputed.
+pub fn read_generation<R: Read + Seek>(reader: &mut R, gen_idx: u32) -> Result<Generation> {
+    let offset = reader.stream_position()?;
 
-    let mut stored_integrity_hash = [0u8; 32];
-    reader.read_exact(&mut stored_integrity_hash)?;
-    if computed_integrity_hash != stored_integrity_hash {
-        return Err(ArchiveError::HashMismatch("generation integrity_hash"));
+    let created_at = reader.read_u64_le()?;
+    let file_count = reader.read_u32_le()? as usize;
+    let dir_count = reader.read_u32_le()? as usize;
+    let blob_count = reader.read_u32_le()? as usize;
+
+    let string_list = strings::read_string_section(reader)?;
+
+    let blobs = (0..blob_count)
+        .map(|_| entries::read_blob_entry(reader))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let dirs = (0..dir_count)
+        .map(|_| entries::read_directory_entry(reader))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let files = (0..file_count)
+        .map(|_| entries::read_file_entry(reader))
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let data_section_count = reader.read_u32_le()? as usize;
+    if data_section_count > 64 {
+        return Err(ArchiveError::Format(
+            "implausible data section count".into(),
+        ));
     }
+    let data_sections = (0..data_section_count)
+        .map(|_| index_data_section(reader))
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let blob_hashes = (0..blob_count)
+        .map(|_| {
+            let mut h = [0u8; 32];
+            reader.read_exact(&mut h)?;
+            Ok::<_, std::io::Error>(h)
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let mut previous_integrity_hash = [0u8; 32];
+    reader.read_exact(&mut previous_integrity_hash)?;
+    let hashed_len = reader.stream_position()? - offset;
+
+    let mut integrity_hash = [0u8; 32];
+    reader.read_exact(&mut integrity_hash)?;
 
     let signature_type = reader.read_u32_le()?;
     let signature_size = reader.read_u32_le()?;
@@ -104,12 +117,7 @@ pub fn read_generation<R: Read>(reader: &mut R) -> Result<Generation> {
 
     validate_directory_tree(&dirs)?;
     validate_file_refs(&files, dirs.len(), blobs.len())?;
-
-    if blob_hashes.len() != blobs.len() {
-        return Err(ArchiveError::Format(
-            "blob_hashes/blobs length mismatch".into(),
-        ));
-    }
+    let (blob_offsets, section_blobs) = locate_blobs(&blobs, &data_sections, gen_idx)?;
 
     Ok(Generation {
         created_at,
@@ -120,17 +128,74 @@ pub fn read_generation<R: Read>(reader: &mut R) -> Result<Generation> {
         data_sections,
         blob_hashes,
         previous_integrity_hash,
-        integrity_hash: computed_integrity_hash,
+        integrity_hash,
         signature_type,
         signature,
+        offset,
+        hashed_len,
+        blob_offsets,
+        section_blobs,
     })
+}
+
+/// Computes where each blob owned by this generation starts within its data
+/// section: blobs are packed back-to-back in `section_blob_idx` order.
+fn locate_blobs(
+    blobs: &[BlobEntry],
+    sections: &[SectionIndex],
+    gen_idx: u32,
+) -> Result<(Vec<u64>, Vec<Vec<usize>>)> {
+    let mut offsets = vec![NOT_OWNED; blobs.len()];
+    let mut owned: Vec<usize> = Vec::new();
+    for (i, b) in blobs.iter().enumerate() {
+        if b.generation_idx > gen_idx {
+            return Err(ArchiveError::Format(
+                "blob refers to a later generation".into(),
+            ));
+        }
+        if b.generation_idx == gen_idx {
+            if b.section_idx as usize >= sections.len() {
+                return Err(ArchiveError::IndexOutOfBounds("BlobEntry.section_idx"));
+            }
+            owned.push(i);
+        }
+    }
+    owned.sort_by_key(|&i| (blobs[i].section_idx, blobs[i].section_blob_idx));
+
+    let mut section_end = vec![0u64; sections.len()];
+    let mut section_blobs: Vec<Vec<usize>> = vec![Vec::new(); sections.len()];
+    for i in owned {
+        let b = &blobs[i];
+        let s = b.section_idx as usize;
+        if b.section_blob_idx as usize != section_blobs[s].len() {
+            return Err(ArchiveError::Format(
+                "section_blob_idx values are not contiguous".into(),
+            ));
+        }
+        section_blobs[s].push(i);
+        offsets[i] = section_end[s];
+        section_end[s] = section_end[s]
+            .checked_add(b.raw_size)
+            .ok_or_else(|| ArchiveError::Format("blob size overflow".into()))?;
+    }
+
+    for (s, section) in sections.iter().enumerate() {
+        if section_end[s] != section.raw_size {
+            return Err(ArchiveError::Format(format!(
+                "data section {s} holds {} bytes but its blobs need {}",
+                section.raw_size, section_end[s]
+            )));
+        }
+    }
+    Ok((offsets, section_blobs))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use bpfs_core::types::enums::CompressionType;
-    use bpfs_pack::encode::generation::{write_generation, GenerationInput, PendingDataSection};
+    use bpfs_pack::encode::generation::{write_generation, GenerationInput, SectionSpec};
+    use std::io::Cursor;
 
     fn sample_input() -> (
         Vec<BlobEntry>,
@@ -161,22 +226,20 @@ mod tests {
         (blobs, blob_hashes, dirs, files)
     }
 
-    #[test]
-    fn roundtrip_unsigned_generation() {
+    const SECTIONS: [SectionSpec; 2] = [
+        SectionSpec {
+            name_stridx: 0,
+            compression: CompressionType::None,
+        },
+        SectionSpec {
+            name_stridx: 0,
+            compression: CompressionType::Zstd,
+        },
+    ];
+
+    fn write_sample(signing_key: Option<&ed25519_dalek::SigningKey>) -> (Vec<u8>, [u8; 32]) {
         let (blobs, blob_hashes, dirs, files) = sample_input();
         let strings = ["", "a.txt"];
-        let data_sections = vec![
-            PendingDataSection {
-                name_stridx: 0,
-                compression: CompressionType::None,
-                raw: b"hello".to_vec(),
-            },
-            PendingDataSection {
-                name_stridx: 0,
-                compression: CompressionType::Brotli,
-                raw: vec![],
-            },
-        ];
         let input = GenerationInput {
             created_at: 42,
             strings: &strings,
@@ -184,59 +247,48 @@ mod tests {
             blob_hashes: &blob_hashes,
             dirs: &dirs,
             files: &files,
-            data_sections: &data_sections,
+            data_sections: &SECTIONS,
+            block_size: 4,
             previous_integrity_hash: [0u8; 32],
-            signing_key: None,
+            signing_key,
         };
         let mut buf = Vec::new();
-        let out = write_generation(&mut buf, &input).unwrap();
+        let mut contents = vec![b"hello".to_vec(), Vec::new()];
+        let out = write_generation(&mut buf, &input, &mut contents).unwrap();
+        assert_eq!(out.bytes_written, buf.len());
+        (buf, out.integrity_hash)
+    }
 
-        let gen = read_generation(&mut &buf[..]).unwrap();
+    #[test]
+    fn roundtrip_unsigned_generation() {
+        let (buf, integrity_hash) = write_sample(None);
+        let (blobs, blob_hashes, dirs, files) = sample_input();
+
+        let mut cursor = Cursor::new(buf);
+        let gen = read_generation(&mut cursor, 0).unwrap();
+        assert_eq!(cursor.position(), cursor.get_ref().len() as u64);
         assert_eq!(gen.created_at, 42);
         assert_eq!(gen.blobs, blobs);
         assert_eq!(gen.dirs, dirs);
         assert_eq!(gen.files, files);
         assert_eq!(gen.blob_hashes, blob_hashes);
-        assert_eq!(gen.integrity_hash, out.integrity_hash);
+        assert_eq!(gen.integrity_hash, integrity_hash);
         assert_eq!(gen.signature_type, 0);
         assert!(gen.signature.is_empty());
-        assert_eq!(gen.data_sections[0].data, b"hello");
+        assert_eq!(gen.data_sections[0].raw_size, 5);
+        assert_eq!(gen.data_sections[0].blocks.len(), 2); // block_size 4
+        assert_eq!(gen.blob_offsets, [0]);
+        assert_eq!(gen.offset, 0);
     }
 
     #[test]
     fn roundtrip_signed_generation() {
         use ed25519_dalek::SigningKey;
 
-        let (blobs, blob_hashes, dirs, files) = sample_input();
-        let strings = ["", "a.txt"];
-        let data_sections = vec![
-            PendingDataSection {
-                name_stridx: 0,
-                compression: CompressionType::None,
-                raw: b"hello".to_vec(),
-            },
-            PendingDataSection {
-                name_stridx: 0,
-                compression: CompressionType::Brotli,
-                raw: vec![],
-            },
-        ];
         let key = SigningKey::generate(&mut rand::rng());
-        let input = GenerationInput {
-            created_at: 1,
-            strings: &strings,
-            blobs: &blobs,
-            blob_hashes: &blob_hashes,
-            dirs: &dirs,
-            files: &files,
-            data_sections: &data_sections,
-            previous_integrity_hash: [0u8; 32],
-            signing_key: Some(&key),
-        };
-        let mut buf = Vec::new();
-        write_generation(&mut buf, &input).unwrap();
+        let (buf, _) = write_sample(Some(&key));
 
-        let gen = read_generation(&mut &buf[..]).unwrap();
+        let gen = read_generation(&mut Cursor::new(buf), 0).unwrap();
         assert_eq!(gen.signature_type, 1);
         assert_eq!(gen.signature.len(), 64);
         assert!(bpfs_core::signing::verify_integrity_hash(
@@ -247,70 +299,17 @@ mod tests {
     }
 
     #[test]
-    fn corrupted_generation_fails_integrity_check() {
-        let (blobs, blob_hashes, dirs, files) = sample_input();
-        let strings = ["", "a.txt"];
-        let data_sections = vec![
-            PendingDataSection {
-                name_stridx: 0,
-                compression: CompressionType::None,
-                raw: b"hello".to_vec(),
-            },
-            PendingDataSection {
-                name_stridx: 0,
-                compression: CompressionType::Brotli,
-                raw: vec![],
-            },
-        ];
-        let input = GenerationInput {
-            created_at: 42,
-            strings: &strings,
-            blobs: &blobs,
-            blob_hashes: &blob_hashes,
-            dirs: &dirs,
-            files: &files,
-            data_sections: &data_sections,
-            previous_integrity_hash: [0u8; 32],
-            signing_key: None,
-        };
-        let mut buf = Vec::new();
-        write_generation(&mut buf, &input).unwrap();
-
-        // Flip a byte inside the file table region.
-        buf[40] ^= 0xFF;
-        assert!(read_generation(&mut &buf[..]).is_err());
+    fn section_bytes_without_owning_blobs_are_rejected() {
+        let (buf, _) = write_sample(None);
+        // Parsed as generation 1, the blob belongs to generation 0, so the 5
+        // bytes in section 0 are unaccounted for.
+        assert!(read_generation(&mut Cursor::new(buf), 1).is_err());
     }
 
     #[test]
     fn truncated_generation_errors() {
-        let (blobs, blob_hashes, dirs, files) = sample_input();
-        let strings = ["", "a.txt"];
-        let data_sections = vec![
-            PendingDataSection {
-                name_stridx: 0,
-                compression: CompressionType::None,
-                raw: b"hello".to_vec(),
-            },
-            PendingDataSection {
-                name_stridx: 0,
-                compression: CompressionType::Brotli,
-                raw: vec![],
-            },
-        ];
-        let input = GenerationInput {
-            created_at: 42,
-            strings: &strings,
-            blobs: &blobs,
-            blob_hashes: &blob_hashes,
-            dirs: &dirs,
-            files: &files,
-            data_sections: &data_sections,
-            previous_integrity_hash: [0u8; 32],
-            signing_key: None,
-        };
-        let mut buf = Vec::new();
-        write_generation(&mut buf, &input).unwrap();
+        let (mut buf, _) = write_sample(None);
         buf.truncate(buf.len() - 10);
-        assert!(read_generation(&mut &buf[..]).is_err());
+        assert!(read_generation(&mut Cursor::new(buf), 0).is_err());
     }
 }

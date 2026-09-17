@@ -35,6 +35,7 @@ async fn pick_archive_file(app: tauri::AppHandle, save: bool) -> Option<String> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(commands::TaskState::default())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -45,6 +46,7 @@ pub fn run() {
             commands::list_archive,
             commands::extract_archive,
             commands::verify_archive,
+            commands::cancel_task,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

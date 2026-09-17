@@ -3,6 +3,7 @@
 pub enum CompressionType {
     None = 0,   // No compression
     Lz4 = 1,    // Very fast, modest ratio
+    Zstd = 2,   // Fast with a good ratio (default)
     Brotli = 3, // Great for web assets
     Lzma = 5,   // High ratio, slow (archive)
 }
@@ -13,6 +14,7 @@ impl TryFrom<u8> for CompressionType {
         match value {
             0 => Ok(CompressionType::None),
             1 => Ok(CompressionType::Lz4),
+            2 => Ok(CompressionType::Zstd),
             3 => Ok(CompressionType::Brotli),
             5 => Ok(CompressionType::Lzma),
             other => Err(other),

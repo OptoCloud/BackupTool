@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 
 use bpfs_read::iter::current_files;
@@ -7,7 +8,7 @@ use bpfs_read::read_archive;
 
 pub fn run(archive: &str, tree: bool) -> Result<()> {
     let file = File::open(Path::new(archive)).with_context(|| format!("opening {archive}"))?;
-    let archive_data = read_archive(file).context("failed to parse/verify archive")?;
+    let archive_data = read_archive(BufReader::new(file)).context("failed to read archive")?;
     let gen = archive_data.latest();
 
     let mut resolved = current_files(gen).context("failed to resolve file tree")?;

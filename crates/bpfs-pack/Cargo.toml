@@ -16,19 +16,16 @@ sha2       = "0.11"
 rayon      = { version = "1.10", optional = true }
 filetime   = "0.2"
 walkdir    = "2"
-memmap2    = "0.9"
 
 # Compression backends
-brotli     = { version = "9", optional = true }
+brotli     = "9"
 lz4_flex = { version = "0.14", optional = true }
-zstd       = { version = "0.14", optional = true, default-features = false, features = ["zstdmt"] }
+zstd       = { version = "0.14", default-features = false }
 
 [features]
-default = ["compression-brotli", "multithread"]
+default = ["multithread"]
 
-compression-brotli = ["dep:brotli"]
 compression-lz4    = ["dep:lz4_flex"]
-compression-zstd   = ["dep:zstd"]
 
 multithread = ["dep:rayon"]
 portable-names = []

@@ -8,17 +8,28 @@ use bpfs_core::types::enums::CompressionType;
 use bpfs_core::types::packed::{BlobEntry, DirectoryEntry, FileEntry};
 use ed25519_dalek::SigningKey;
 
-use crate::encode::{data, entries, strings};
-use crate::io::writers::HashWriter;
+use crate::encode::data::SectionEncoder;
+use crate::encode::{entries, strings};
+use crate::io::writers::{CountingWriter, HashWriter};
 
-/// One data section to be written into this generation: a name (as a string
-/// table index), the compression to apply, and the raw (pre-compression)
-/// concatenated bytes of every blob assigned to it, in `section_blob_idx`
-/// order.
-pub struct PendingDataSection {
+/// One data section of a generation: its name (a string table index) and the
+/// compression applied to its blocks.
+pub struct SectionSpec {
     pub name_stridx: u32,
     pub compression: CompressionType,
-    pub raw: Vec<u8>,
+}
+
+/// Supplies the raw (uncompressed) bytes of each data section: every blob
+/// assigned to it, concatenated in `section_blob_idx` order.
+pub trait SectionSource {
+    fn write_section(&mut self, section_idx: usize, out: &mut dyn Write) -> io::Result<()>;
+}
+
+/// In-memory section contents, indexed by section.
+impl SectionSource for Vec<Vec<u8>> {
+    fn write_section(&mut self, section_idx: usize, out: &mut dyn Write) -> io::Result<()> {
+        out.write_all(&self[section_idx])
+    }
 }
 
 pub struct GenerationInput<'a> {
@@ -28,7 +39,8 @@ pub struct GenerationInput<'a> {
     pub blob_hashes: &'a [[u8; 32]],
     pub dirs: &'a [DirectoryEntry],
     pub files: &'a [FileEntry],
-    pub data_sections: &'a [PendingDataSection],
+    pub data_sections: &'a [SectionSpec],
+    pub block_size: u32,
     pub previous_integrity_hash: [u8; 32],
     pub signing_key: Option<&'a SigningKey>,
 }
@@ -49,17 +61,29 @@ pub struct GenerationOutput {
 /// FileEntry files[file_count]
 /// u32 data_section_count
 /// DataSection data_sections[data_section_count]
-/// Sha256 blobs_hashes[blob_count]
-/// Sha256 previous_integrity_hash
-/// Sha256 integrity_hash        // SHA-256 of everything above (through previous_integrity_hash)
+/// u8  blob_hashes[blob_count][32]
+/// u8  previous_integrity_hash[32]
+/// u8  integrity_hash[32]          // SHA-256 of everything above
 /// u32 signature_type
 /// u32 signature_size
-/// u8  signature[signature_size] // signs integrity_hash; not itself covered by it
+/// u8  signature[signature_size]   // signs integrity_hash; not itself covered by it
 /// u32 suffix
 /// ```
 pub fn write_generation<W: Write>(
     writer: &mut W,
     input: &GenerationInput,
+    sections: &mut dyn SectionSource,
+) -> io::Result<GenerationOutput> {
+    write_generation_with_progress(writer, input, sections, &|_| {})
+}
+
+/// Like [`write_generation`], calling `on_block_done` (possibly from worker
+/// threads) with the uncompressed size of each data block once compressed.
+pub fn write_generation_with_progress<W: Write>(
+    writer: &mut W,
+    input: &GenerationInput,
+    sections: &mut dyn SectionSource,
+    on_block_done: &(dyn Fn(u64) + Sync),
 ) -> io::Result<GenerationOutput> {
     assert_eq!(
         input.blobs.len(),
@@ -67,86 +91,70 @@ pub fn write_generation<W: Write>(
         "blobs and blob_hashes must be parallel arrays"
     );
 
+    let mut out = CountingWriter::new(writer);
     let mut hasher = Sha256::new();
-    let mut written = 0usize;
 
     {
-        let mut hw = HashWriter::new(writer, &mut hasher);
+        let mut hw = HashWriter::new(&mut out, &mut hasher);
 
         hw.write_u64_le(input.created_at)?;
         hw.write_u32_le(u32::try_from(input.files.len()).unwrap())?;
         hw.write_u32_le(u32::try_from(input.dirs.len()).unwrap())?;
         hw.write_u32_le(u32::try_from(input.blobs.len()).unwrap())?;
-        written += 8 + 4 + 4 + 4;
 
         let mut strings_buf = Vec::new();
         strings::write_string_section(&mut strings_buf, input.strings)?;
         hw.write_all(&strings_buf)?;
-        written += strings_buf.len();
 
         for b in input.blobs {
             entries::write_blob_entry(&mut hw, b)?;
         }
-        written += input.blobs.len() * entries::BLOB_ENTRY_SIZE;
-
         for d in input.dirs {
             entries::write_directory_entry(&mut hw, d)?;
         }
-        written += input.dirs.len() * entries::DIRECTORY_ENTRY_SIZE;
-
         for f in input.files {
             entries::write_file_entry(&mut hw, f)?;
         }
-        written += input.files.len() * entries::FILE_ENTRY_SIZE;
 
         hw.write_u32_le(u32::try_from(input.data_sections.len()).unwrap())?;
-        written += 4;
-
-        for section in input.data_sections {
-            let mut section_buf = Vec::new();
-            data::write_data_section(
-                &mut section_buf,
-                section.name_stridx,
-                section.compression,
-                &section.raw,
+        for (idx, spec) in input.data_sections.iter().enumerate() {
+            let mut encoder = SectionEncoder::new(
+                &mut hw,
+                spec.name_stridx,
+                spec.compression,
+                input.block_size,
+                on_block_done,
             )?;
-            hw.write_all(&section_buf)?;
-            written += section_buf.len();
+            sections.write_section(idx, &mut encoder)?;
+            encoder.finish()?;
         }
 
         for h in input.blob_hashes {
             hw.write_all(h)?;
         }
-        written += input.blob_hashes.len() * 32;
-
         hw.write_all(&input.previous_integrity_hash)?;
-        written += 32;
     }
 
     let integrity_hash: [u8; 32] = hasher.finalize().into();
-    writer.write_all(&integrity_hash)?;
-    written += 32;
+    out.write_all(&integrity_hash)?;
 
     match input.signing_key {
         Some(key) => {
             let sig = sign_integrity_hash(key, &integrity_hash);
-            writer.write_u32_le(1)?; // SignatureType::Ed25519
-            writer.write_u32_le(u32::try_from(sig.len()).unwrap())?;
-            writer.write_all(&sig)?;
-            written += 4 + 4 + sig.len();
+            out.write_u32_le(1)?; // SignatureType::Ed25519
+            out.write_u32_le(u32::try_from(sig.len()).unwrap())?;
+            out.write_all(&sig)?;
         }
         None => {
-            writer.write_u32_le(0)?; // SignatureType::None
-            writer.write_u32_le(0)?;
-            written += 8;
+            out.write_u32_le(0)?; // SignatureType::None
+            out.write_u32_le(0)?;
         }
     }
 
-    writer.write_u32_le(GENERATION_SUFFIX)?;
-    written += 4;
+    out.write_u32_le(GENERATION_SUFFIX)?;
 
     Ok(GenerationOutput {
         integrity_hash,
-        bytes_written: written,
+        bytes_written: out.bytes_written(),
     })
 }

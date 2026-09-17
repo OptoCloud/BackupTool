@@ -1,5 +1,6 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use bpfs_core::types::enums::CompressionType;
+use clap::{Parser, Subcommand, ValueEnum};
 
 mod cmd;
 
@@ -10,6 +11,23 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum Codec {
+    Zstd,
+    Brotli,
+    None,
+}
+
+impl From<Codec> for CompressionType {
+    fn from(c: Codec) -> Self {
+        match c {
+            Codec::Zstd => CompressionType::Zstd,
+            Codec::Brotli => CompressionType::Brotli,
+            Codec::None => CompressionType::None,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     Pack {
@@ -17,8 +35,9 @@ enum Command {
         out: String,
         #[arg(long)]
         final_hash: bool,
-        #[arg(long)]
-        no_compress: bool,
+        /// Compression for compressible files
+        #[arg(long, value_enum, default_value_t = Codec::Zstd)]
+        compression: Codec,
     },
     Ls {
         archive: String,
@@ -47,8 +66,8 @@ fn main() -> Result<()> {
             src,
             out,
             final_hash,
-            no_compress,
-        } => cmd::pack::run(&src, &out, final_hash, no_compress),
+            compression,
+        } => cmd::pack::run(&src, &out, final_hash, compression.into()),
         Command::Ls { archive, tree } => cmd::ls::run(&archive, tree),
         Command::Extract {
             archive,

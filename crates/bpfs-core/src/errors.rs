@@ -22,6 +22,8 @@ pub enum ArchiveError {
     InvalidSignature,
     #[error("Index out of bounds: {0}")]
     IndexOutOfBounds(&'static str),
+    #[error("Operation cancelled")]
+    Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, ArchiveError>;

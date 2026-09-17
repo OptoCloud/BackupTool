@@ -37,6 +37,7 @@ struct StringSection {
 enum CompressionType : u8 {
     None   = 0,
     Lz4    = 1, // reserved, not yet implemented by the encoder/decoder
+    Zstd   = 2,
     Brotli = 3,
     Lzma   = 5, // reserved, not yet implemented by the encoder/decoder
 };
@@ -52,8 +53,8 @@ enum SignatureType : u32 {
 // sections. A blob physically stored in the *current* generation has
 // `generation_idx` equal to that generation's own index. Blobs assigned to
 // the same section are concatenated back-to-back in increasing
-// `section_blob_idx` order (uncompressed, before the section itself is
-// optionally compressed as one unit) -- there is no per-blob offset field;
+// `section_blob_idx` order (uncompressed, before the section is split into
+// compressed blocks) -- there is no per-blob offset field;
 // offsets are reconstructed by summing preceding blobs' `raw_size`.
 struct BlobEntry {
     u64 raw_size;
@@ -80,20 +81,33 @@ struct FileEntry {
     timestamp_ms modified_at;
 };
 
-// name(4) + compression(1) + pad(3) + size(8) + data[size] + hash(32).
+// One compressed chunk of a data section. `raw_size == 0` terminates the
+// section (and then only the two size fields are present).
+struct DataBlock {
+    u32 raw_size;     // uncompressed length, <= the section's block_size
+    u32 stored_size;  // on-disk length of data
+    if (raw_size != 0) {
+        Sha256 hash;  // SHA-256 of data
+        u8 data[stored_size];
+    }
+};
+
 // There are always exactly 2 data sections per generation, in this fixed
 // order: section_idx 0 = "stored" (CompressionType::None; media/archives/
 // anything the compression policy flags as already-incompressible),
-// section_idx 1 = "compressed" (CompressionType::Brotli; everything else).
-// Both are always present even if empty, so `section_idx` always indexes
-// directly into `data_sections` with no remapping.
+// section_idx 1 = "compressed" (Zstd by default, or Brotli). Both are always
+// present even if empty, so `section_idx` always indexes directly into
+// `data_sections` with no remapping. The section's raw stream (all blocks
+// decompressed and concatenated) holds its blobs back-to-back; blocks are cut
+// every `block_size` bytes regardless of blob boundaries.
 struct DataSection {
     string_id name;
     CompressionType compression;
     padding[3];
-    u64 size;      // compressed (on-disk) length
-    u8  data[size];
-    Sha256 hash;   // SHA-256 of name..data (inclusive)
+    u32 block_size;   // nominal uncompressed size of each block (64 MiB by default)
+    DataBlock blocks[while(std::mem::read_unsigned($, 4) != 0)];
+    u32 end_raw_size;    // 0
+    u32 end_stored_size; // 0
 };
 
 // One full snapshot. `integrity_hash` is the SHA-256 of every byte of this
@@ -130,7 +144,7 @@ struct Generation {
 // Top-Level Archive Header (16 bytes)
 struct Archive {
     u32 magic;        // Must be 0x42504653 ('BPFS')
-    u16 version;      // Archive version (currently 1)
+    u16 version;      // Archive version (currently 2)
     u16 header_flags; // Feature flags, currently unused
     padding[8];        // Reserved, header sums to 16 bytes
     Generation generations[]; // parsed until EOF
