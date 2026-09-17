@@ -9,10 +9,10 @@ license.workspace = true
 [dependencies]
 bpfs-core = { path = "../bpfs-core" }
 
-ed25519-dalek = "2"
+ed25519-dalek = "3"
 anyhow     = "1"
-thiserror  = "1"
-sha2       = "0.10"
+thiserror  = "2"
+sha2       = "0.11"
 rayon      = { version = "1.10", optional = true }
 filetime   = "0.2"
 walkdir    = "2"
@@ -20,9 +20,9 @@ memmap2    = "0.9"
 byteorder  = "1.5"
 
 # Compression backends
-brotli     = { version = "8", optional = true }
+brotli     = { version = "9", optional = true }
 lz4        = { version = "1.28", optional = true }
-zstd       = { version = "0.13", optional = true, default-features = false, features = ["zstdmt"] }
+zstd       = { version = "0.14", optional = true, default-features = false, features = ["zstdmt"] }
 
 [features]
 default = ["compression-brotli", "multithread"]
