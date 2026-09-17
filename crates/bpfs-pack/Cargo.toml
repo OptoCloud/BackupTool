@@ -17,18 +17,17 @@ rayon      = { version = "1.10", optional = true }
 filetime   = "0.2"
 walkdir    = "2"
 memmap2    = "0.9"
-byteorder  = "1.5"
 
 # Compression backends
 brotli     = { version = "9", optional = true }
-lz4        = { version = "1.28", optional = true }
+lz4_flex = { version = "0.14", optional = true }
 zstd       = { version = "0.14", optional = true, default-features = false, features = ["zstdmt"] }
 
 [features]
 default = ["compression-brotli", "multithread"]
 
 compression-brotli = ["dep:brotli"]
-compression-lz4    = ["dep:lz4"]
+compression-lz4    = ["dep:lz4_flex"]
 compression-zstd   = ["dep:zstd"]
 
 multithread = ["dep:rayon"]

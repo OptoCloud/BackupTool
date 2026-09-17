@@ -1,7 +1,7 @@
+use crate::io::le::WriteLeExt;
 use crate::io::writers::HashWriter;
 use bpfs_core::types::enums::CompressionType;
 use brotli::CompressorWriter;
-use byteorder::{LittleEndian, WriteBytesExt};
 use sha2::{Digest, Sha256};
 use std::io::{self, Error, ErrorKind, Write};
 
@@ -46,10 +46,10 @@ pub fn write_data_section<W: Write>(
     let mut hasher = Sha256::new();
     {
         let mut hw = HashWriter::new(writer, &mut hasher);
-        hw.write_u32::<LittleEndian>(name_stridx)?;
+        hw.write_u32_le(name_stridx)?;
         hw.write_u8(compression as u8)?;
         hw.write_all(&[0u8; 3])?;
-        hw.write_u64::<LittleEndian>(size)?;
+        hw.write_u64_le(size)?;
         hw.write_all(&compressed)?;
     }
     let digest = hasher.finalize();

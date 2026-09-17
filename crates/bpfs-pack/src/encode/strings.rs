@@ -1,6 +1,6 @@
+use crate::io::le::WriteLeExt;
 use crate::io::writers::HashWriter;
 use brotli::CompressorWriter;
-use byteorder::{LittleEndian, WriteBytesExt};
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
 
@@ -45,13 +45,13 @@ pub fn write_string_section<W: Write>(writer: &mut W, strings: &[&str]) -> io::R
     let mut hasher = Sha256::new();
     {
         let mut hw = HashWriter::new(writer, &mut hasher);
-        hw.write_u32::<LittleEndian>(count)?;
+        hw.write_u32_le(count)?;
         for (offset, length) in &lookup {
-            hw.write_u32::<LittleEndian>(*offset)?;
-            hw.write_u32::<LittleEndian>(*length)?;
+            hw.write_u32_le(*offset)?;
+            hw.write_u32_le(*length)?;
         }
-        hw.write_u32::<LittleEndian>(uncompressed_size)?;
-        hw.write_u32::<LittleEndian>(stored_size)?;
+        hw.write_u32_le(uncompressed_size)?;
+        hw.write_u32_le(stored_size)?;
         hw.write_all(&compressed)?;
     }
 

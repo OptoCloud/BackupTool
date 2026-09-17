@@ -1,4 +1,4 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+use crate::io::ReadLeExt;
 use sha2::{Digest, Sha256};
 use std::io::Read;
 
@@ -44,10 +44,10 @@ pub fn read_generation<R: Read>(reader: &mut R) -> Result<Generation> {
     {
         let mut tee = TeeHashReader::new(reader, &mut hasher);
 
-        created_at = tee.read_u64::<LittleEndian>()?;
-        let file_count = tee.read_u32::<LittleEndian>()? as usize;
-        let dir_count = tee.read_u32::<LittleEndian>()? as usize;
-        let blob_count = tee.read_u32::<LittleEndian>()? as usize;
+        created_at = tee.read_u64_le()?;
+        let file_count = tee.read_u32_le()? as usize;
+        let dir_count = tee.read_u32_le()? as usize;
+        let blob_count = tee.read_u32_le()? as usize;
 
         string_list = strings::read_string_section(&mut tee)?;
 
@@ -61,7 +61,7 @@ pub fn read_generation<R: Read>(reader: &mut R) -> Result<Generation> {
             .map(|_| entries::read_file_entry(&mut tee))
             .collect::<std::io::Result<Vec<_>>>()?;
 
-        let data_section_count = tee.read_u32::<LittleEndian>()? as usize;
+        let data_section_count = tee.read_u32_le()? as usize;
         data_sections = (0..data_section_count)
             .map(|_| data::read_data_section(&mut tee))
             .collect::<std::io::Result<Vec<_>>>()?;
@@ -87,15 +87,15 @@ pub fn read_generation<R: Read>(reader: &mut R) -> Result<Generation> {
         return Err(ArchiveError::HashMismatch("generation integrity_hash"));
     }
 
-    let signature_type = reader.read_u32::<LittleEndian>()?;
-    let signature_size = reader.read_u32::<LittleEndian>()?;
+    let signature_type = reader.read_u32_le()?;
+    let signature_size = reader.read_u32_le()?;
     if signature_size > 4096 {
         return Err(ArchiveError::Format("implausible signature size".into()));
     }
     let mut signature = vec![0u8; signature_size as usize];
     reader.read_exact(&mut signature)?;
 
-    let suffix = reader.read_u32::<LittleEndian>()?;
+    let suffix = reader.read_u32_le()?;
     if suffix != GENERATION_SUFFIX {
         return Err(ArchiveError::Format(format!(
             "bad generation suffix marker: {suffix:#x}"

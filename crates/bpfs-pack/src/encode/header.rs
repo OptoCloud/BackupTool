@@ -1,5 +1,5 @@
+use crate::io::le::WriteLeExt;
 use bpfs_core::constants::{MAGIC, VERSION};
-use byteorder::{LittleEndian, WriteBytesExt};
 use std::io::{self, Write};
 
 /// BPFS archive header layout:
@@ -11,8 +11,8 @@ use std::io::{self, Write};
 /// Always 16 bytes total.
 pub fn write_header<W: Write>(mut sink: W, flags: u16) -> io::Result<()> {
     sink.write_all(&MAGIC)?; // 4 bytes
-    sink.write_u16::<LittleEndian>(VERSION)?; // 2 bytes
-    sink.write_u16::<LittleEndian>(flags)?; // 2 bytes
+    sink.write_u16_le(VERSION)?; // 2 bytes
+    sink.write_u16_le(flags)?; // 2 bytes
     sink.write_all(&[0u8; 8])?; // 8 bytes reserved
     Ok(())
 }

@@ -1,33 +1,33 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+use crate::io::ReadLeExt;
 use std::io::{self, Read};
 
 use bpfs_core::types::packed::{BlobEntry, DirectoryEntry, FileEntry};
 
 pub fn read_blob_entry<R: Read>(r: &mut R) -> io::Result<BlobEntry> {
     Ok(BlobEntry {
-        raw_size: r.read_u64::<LittleEndian>()?,
-        generation_idx: r.read_u32::<LittleEndian>()?,
-        section_idx: r.read_u32::<LittleEndian>()?,
-        section_blob_idx: r.read_u32::<LittleEndian>()?,
+        raw_size: r.read_u64_le()?,
+        generation_idx: r.read_u32_le()?,
+        section_idx: r.read_u32_le()?,
+        section_blob_idx: r.read_u32_le()?,
     })
 }
 
 pub fn read_directory_entry<R: Read>(r: &mut R) -> io::Result<DirectoryEntry> {
     Ok(DirectoryEntry {
-        parent_id: r.read_u32::<LittleEndian>()?,
-        name_stridx: r.read_u32::<LittleEndian>()?,
-        created_at: r.read_u64::<LittleEndian>()?,
-        modified_at: r.read_u64::<LittleEndian>()?,
+        parent_id: r.read_u32_le()?,
+        name_stridx: r.read_u32_le()?,
+        created_at: r.read_u64_le()?,
+        modified_at: r.read_u64_le()?,
     })
 }
 
 pub fn read_file_entry<R: Read>(r: &mut R) -> io::Result<FileEntry> {
     Ok(FileEntry {
-        blob_idx: r.read_u32::<LittleEndian>()?,
-        dir_idx: r.read_u32::<LittleEndian>()?,
-        name_stridx: r.read_u32::<LittleEndian>()?,
-        created_at: r.read_u64::<LittleEndian>()?,
-        modified_at: r.read_u64::<LittleEndian>()?,
+        blob_idx: r.read_u32_le()?,
+        dir_idx: r.read_u32_le()?,
+        name_stridx: r.read_u32_le()?,
+        created_at: r.read_u64_le()?,
+        modified_at: r.read_u64_le()?,
     })
 }
 

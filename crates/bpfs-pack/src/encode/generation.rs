@@ -1,4 +1,4 @@
-use byteorder::{LittleEndian, WriteBytesExt};
+use crate::io::le::WriteLeExt;
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
 
@@ -73,10 +73,10 @@ pub fn write_generation<W: Write>(
     {
         let mut hw = HashWriter::new(writer, &mut hasher);
 
-        hw.write_u64::<LittleEndian>(input.created_at)?;
-        hw.write_u32::<LittleEndian>(u32::try_from(input.files.len()).unwrap())?;
-        hw.write_u32::<LittleEndian>(u32::try_from(input.dirs.len()).unwrap())?;
-        hw.write_u32::<LittleEndian>(u32::try_from(input.blobs.len()).unwrap())?;
+        hw.write_u64_le(input.created_at)?;
+        hw.write_u32_le(u32::try_from(input.files.len()).unwrap())?;
+        hw.write_u32_le(u32::try_from(input.dirs.len()).unwrap())?;
+        hw.write_u32_le(u32::try_from(input.blobs.len()).unwrap())?;
         written += 8 + 4 + 4 + 4;
 
         let mut strings_buf = Vec::new();
@@ -99,7 +99,7 @@ pub fn write_generation<W: Write>(
         }
         written += input.files.len() * entries::FILE_ENTRY_SIZE;
 
-        hw.write_u32::<LittleEndian>(u32::try_from(input.data_sections.len()).unwrap())?;
+        hw.write_u32_le(u32::try_from(input.data_sections.len()).unwrap())?;
         written += 4;
 
         for section in input.data_sections {
@@ -130,19 +130,19 @@ pub fn write_generation<W: Write>(
     match input.signing_key {
         Some(key) => {
             let sig = sign_integrity_hash(key, &integrity_hash);
-            writer.write_u32::<LittleEndian>(1)?; // SignatureType::Ed25519
-            writer.write_u32::<LittleEndian>(u32::try_from(sig.len()).unwrap())?;
+            writer.write_u32_le(1)?; // SignatureType::Ed25519
+            writer.write_u32_le(u32::try_from(sig.len()).unwrap())?;
             writer.write_all(&sig)?;
             written += 4 + 4 + sig.len();
         }
         None => {
-            writer.write_u32::<LittleEndian>(0)?; // SignatureType::None
-            writer.write_u32::<LittleEndian>(0)?;
+            writer.write_u32_le(0)?; // SignatureType::None
+            writer.write_u32_le(0)?;
             written += 8;
         }
     }
 
-    writer.write_u32::<LittleEndian>(GENERATION_SUFFIX)?;
+    writer.write_u32_le(GENERATION_SUFFIX)?;
     written += 4;
 
     Ok(GenerationOutput {

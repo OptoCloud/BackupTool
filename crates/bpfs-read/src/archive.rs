@@ -1,4 +1,4 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+use crate::io::ReadLeExt;
 use std::io::{Read, Seek, SeekFrom};
 
 use bpfs_core::constants::MAGIC;
@@ -25,8 +25,8 @@ pub fn read_archive<R: Read + Seek>(mut reader: R) -> Result<Archive> {
     if magic != MAGIC {
         return Err(ArchiveError::Format("invalid BPFS magic".into()));
     }
-    let version = reader.read_u16::<LittleEndian>()?;
-    let flags = reader.read_u16::<LittleEndian>()?;
+    let version = reader.read_u16_le()?;
+    let flags = reader.read_u16_le()?;
     let mut reserved = [0u8; 8];
     reader.read_exact(&mut reserved)?;
 
