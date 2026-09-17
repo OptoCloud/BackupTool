@@ -1,0 +1,12 @@
+[workspace]
+members = [
+  "crates/bpfs-core",
+  "crates/bpfs-pack",
+  "crates/bpfs-read",
+  "crates/bpfs-cli",
+  "crates/gui/frontend/src-tauri",
+]
+resolver = "2"
+[workspace.package]
+authors = ["OptoCloud <contact@optocloud.no>"]
+license = "GPL-3.0-or-later"

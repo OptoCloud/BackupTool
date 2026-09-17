@@ -1,0 +1,13 @@
+[package]
+name = "bpfs-cli"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bpfs-core = { path = "../bpfs-core" }
+bpfs-pack = { path = "../bpfs-pack" }
+bpfs-read = { path = "../bpfs-read" }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
