@@ -206,7 +206,6 @@ mod tests {
     #[test]
     fn roundtrip_signed_generation() {
         use ed25519_dalek::SigningKey;
-        use rand::rngs::OsRng;
 
         let (blobs, blob_hashes, dirs, files) = sample_input();
         let strings = ["", "a.txt"];
@@ -222,7 +221,7 @@ mod tests {
                 raw: vec![],
             },
         ];
-        let key = SigningKey::generate(&mut OsRng);
+        let key = SigningKey::generate(&mut rand::rng());
         let input = GenerationInput {
             created_at: 1,
             strings: &strings,

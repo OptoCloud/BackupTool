@@ -26,11 +26,10 @@ pub fn verify_integrity_hash(
 mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
-    use rand::rngs::OsRng;
 
     #[test]
     fn sign_then_verify_succeeds() {
-        let key = SigningKey::generate(&mut OsRng);
+        let key = SigningKey::generate(&mut rand::rng());
         let hash = [7u8; 32];
         let sig = sign_integrity_hash(&key, &hash);
         assert!(verify_integrity_hash(&key.verifying_key(), &hash, &sig));
@@ -38,7 +37,7 @@ mod tests {
 
     #[test]
     fn tampered_hash_fails_verification() {
-        let key = SigningKey::generate(&mut OsRng);
+        let key = SigningKey::generate(&mut rand::rng());
         let hash = [7u8; 32];
         let sig = sign_integrity_hash(&key, &hash);
         let tampered = [8u8; 32];
@@ -51,8 +50,8 @@ mod tests {
 
     #[test]
     fn wrong_key_fails_verification() {
-        let key = SigningKey::generate(&mut OsRng);
-        let other = SigningKey::generate(&mut OsRng);
+        let key = SigningKey::generate(&mut rand::rng());
+        let other = SigningKey::generate(&mut rand::rng());
         let hash = [7u8; 32];
         let sig = sign_integrity_hash(&key, &hash);
         assert!(!verify_integrity_hash(&other.verifying_key(), &hash, &sig));
@@ -60,7 +59,7 @@ mod tests {
 
     #[test]
     fn malformed_signature_bytes_rejected() {
-        let key = SigningKey::generate(&mut OsRng);
+        let key = SigningKey::generate(&mut rand::rng());
         let hash = [7u8; 32];
         assert!(!verify_integrity_hash(
             &key.verifying_key(),

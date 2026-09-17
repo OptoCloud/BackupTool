@@ -62,7 +62,6 @@ mod tests {
     use bpfs_pack::pack::{pack_directory, NoExistingBlobs, PackOptions};
     use bpfs_pack::policy::compression::DefaultCompressionPolicy;
     use ed25519_dalek::SigningKey;
-    use rand::rngs::OsRng;
     use std::fs;
     use std::io::Cursor;
     use tempfile::tempdir;
@@ -136,7 +135,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("a.txt"), b"signed content").unwrap();
 
-        let key = SigningKey::generate(&mut OsRng);
+        let key = SigningKey::generate(&mut rand::rng());
         let p = policy();
         let mut buf = Vec::new();
         pack_directory(
@@ -162,8 +161,8 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("a.txt"), b"signed content").unwrap();
 
-        let key = SigningKey::generate(&mut OsRng);
-        let other = SigningKey::generate(&mut OsRng);
+        let key = SigningKey::generate(&mut rand::rng());
+        let other = SigningKey::generate(&mut rand::rng());
         let p = policy();
         let mut buf = Vec::new();
         pack_directory(
@@ -189,7 +188,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("a.txt"), b"no signature here").unwrap();
 
-        let key = SigningKey::generate(&mut OsRng);
+        let key = SigningKey::generate(&mut rand::rng());
         let p = policy();
         let mut buf = Vec::new();
         pack_directory(
