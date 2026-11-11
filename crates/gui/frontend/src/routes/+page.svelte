@@ -1,8 +1,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import Icon, { type IconName } from "$lib/Icon.svelte";
-  import TaskPanel from "$lib/TaskPanel.svelte";
-  import { humanBytes, task, type TaskKind } from "$lib/task.svelte";
+  import Icon, { type IconName } from "#lib/Icon.svelte";
+  import TaskPanel from "#lib/TaskPanel.svelte";
+  import { humanBytes, task, type TaskKind } from "#lib/task.svelte.js";
 
   type PackSummary = {
     generation_idx: number;

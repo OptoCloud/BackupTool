@@ -12,21 +12,25 @@
     "tauri": "tauri"
   },
   "license": "GPL-3.0-or-later",
-  "packageManager": "pnpm@12.4.2",
+  "packageManager": "pnpm@12.18.0",
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "~2.8.4",
     "@tauri-apps/plugin-fs": "~2.7.1",
-    "@tauri-apps/plugin-opener": "^2.7.2"
+    "@tauri-apps/plugin-opener": "^2.7.3"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^4.0.1",
-    "@sveltejs/kit": "^3.1.1",
+    "@sveltejs/kit": "^3.2.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tauri-apps/cli": "^2.12.4",
+    "@types/node": "^26.6.6",
     "svelte": "^5.57.3",
     "svelte-check": "^4.7.8",
     "typescript": "~6.0.3",
-    "vite": "^8.3.5"
+    "vite": "^8.3.7"
+  },
+  "imports": {
+    "#lib/*": "./src/lib/*"
   }
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Icon from "$lib/Icon.svelte";
+  import Icon from "#lib/Icon.svelte";
   import {
     formatClock,
     formatDuration,
@@ -9,7 +9,7 @@
     taskSteps,
     type Phase,
     type TaskKind,
-  } from "$lib/task.svelte";
+  } from "#lib/task.svelte.js";
 
   let {
     kind,
